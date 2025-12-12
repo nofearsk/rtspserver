@@ -12,7 +12,7 @@
 set -e
 
 # Default values
-REPO_URL="https://github.com/YOUR_USERNAME/rtspserver.git"
+REPO_URL="https://github.com/nofearsk/rtspserver.git"
 BRANCH="main"
 INSTALL_DIR="/opt/rtspserver"
 AUTO_START="yes"
