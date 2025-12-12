@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Paths
     base_dir: Path = Path(__file__).parent
-    streams_dir: Path = Field(default_factory=lambda: Path(__file__).parent / "streams")
+    streams_dir: Path = Field(default_factory=lambda: Path("/tmp/rtspserver/streams"))
     database_path: Path = Field(default_factory=lambda: Path(__file__).parent / "rtspserver.db")
 
     # Security
@@ -45,7 +45,8 @@ class Settings(BaseSettings):
 
     # Resource limits
     max_streams: int = 50
-    segment_cleanup_interval: int = 30  # Seconds between cleanup runs
+    segment_cleanup_interval: int = 60  # Seconds between cleanup runs
+    segment_max_age_minutes: int = 5  # Delete .ts segments older than this
 
     class Config:
         env_prefix = "RTSP_"

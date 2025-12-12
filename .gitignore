@@ -1,0 +1,54 @@
+# Streams and HLS segments
+streams/
+data/streams/
+
+# Database
+*.db
+data/*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+ENV/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# PM2/Node
+node_modules/
+ecosystem.config.js
+
+# Generated files
+rtspserver.sh
+
+# Temp files
+*.tmp
+*.temp
+/tmp/
+
+# Test files
+.pytest_cache/
+.coverage
+htmlcov/

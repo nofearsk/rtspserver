@@ -387,19 +387,37 @@ class StreamManager:
                 logger.exception(f"Error in cleanup loop: {e}")
 
     async def _cleanup_segments(self):
-        """Remove HLS segments for stopped streams."""
-        active_ids = set(self._processes.keys())
+        """Remove old HLS segments (older than segment_max_age_minutes)."""
+        import time
+        max_age_seconds = settings.segment_max_age_minutes * 60
+        now = time.time()
+        deleted_count = 0
+
+        if not settings.streams_dir.exists():
+            return
 
         for stream_dir in settings.streams_dir.iterdir():
             if stream_dir.is_dir():
+                # Delete old .ts segment files
+                for ts_file in stream_dir.glob("*.ts"):
+                    try:
+                        file_age = now - ts_file.stat().st_mtime
+                        if file_age > max_age_seconds:
+                            ts_file.unlink()
+                            deleted_count += 1
+                    except Exception:
+                        pass
+
+                # Also clean orphaned directories (deleted streams)
                 stream_id = stream_dir.name
-                if stream_id not in active_ids:
-                    # Check if stream exists in DB
+                if stream_id not in self._processes:
                     stream = await db.get_stream(stream_id)
                     if not stream:
-                        # Stream deleted, remove directory
                         shutil.rmtree(stream_dir)
                         logger.info(f"Cleaned up orphaned stream directory: {stream_dir}")
+
+        if deleted_count > 0:
+            logger.debug(f"Cleaned up {deleted_count} old segment files")
 
     def _parse_ffmpeg_error(self, error_output: str) -> str:
         """Parse FFmpeg error output to user-friendly message."""
