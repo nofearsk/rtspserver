@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  rtspserver:
+    build: .
+    container_name: rtspserver
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data          # Database persistence
+      - ./streams:/app/streams    # HLS segments (can use tmpfs for RAM)
+    environment:
+      - RTSP_HOST=0.0.0.0
+      - RTSP_PORT=8000
+      - RTSP_DEBUG=false
+      - RTSP_SECRET_KEY=${RTSP_SECRET_KEY:-change-me-in-production}
+      - RTSP_API_KEY=${RTSP_API_KEY:-change-me}
+      - RTSP_DEFAULT_MODE=on_demand
+      - RTSP_KEEP_ALIVE_SECONDS=60
+      - RTSP_MAX_STREAMS=50
+    # Optional: Use tmpfs for HLS segments to reduce disk I/O
+    # tmpfs:
+    #   - /app/streams:size=512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

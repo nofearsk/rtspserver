@@ -1,0 +1,3039 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTSP Streaming Server</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- WebRTC is native in modern browsers -->
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 20px;
+        }
+        h1 { font-size: 1.5rem; color: #00d9ff; }
+        .api-key-section {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        input, select, textarea {
+            background: #252540;
+            border: 1px solid #444;
+            color: #eee;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #00d9ff;
+        }
+        button {
+            background: #00d9ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        button:hover { background: #00b8d9; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        button.secondary { background: #444; color: #eee; }
+        button.secondary:hover { background: #555; }
+        button.danger { background: #e74c3c; color: #fff; }
+        button.danger:hover { background: #c0392b; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        .card {
+            background: #252540;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #333;
+        }
+        .card-title { font-weight: 600; }
+        .card-body { padding: 15px; }
+        .status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status.running { background: #27ae60; }
+        .status.stopped { background: #555; }
+        .status.starting { background: #f39c12; }
+        .status.error { background: #e74c3c; }
+        .status.reconnecting { background: #f39c12; }
+        .video-container {
+            background: #000;
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .video-container video {
+            width: 100%;
+            height: 100%;
+        }
+        .video-placeholder {
+            color: #666;
+            text-align: center;
+        }
+        .stream-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+        .stream-info-item {
+            display: flex;
+            justify-content: space-between;
+        }
+        .stream-info-item .label { color: #888; }
+        .stream-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .stream-actions button { font-size: 13px; padding: 6px 12px; }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            background: #252540;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid #333;
+        }
+        .modal-body { padding: 20px; }
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 15px 20px;
+            border-top: 1px solid #333;
+        }
+        .form-group { margin-bottom: 15px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+            font-size: 13px;
+        }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+        }
+        .form-group textarea { min-height: 100px; font-family: monospace; }
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .error-box {
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .analyze-results {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .analyze-results h4 { margin-bottom: 10px; color: #00d9ff; }
+        .analyze-results .item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #333;
+        }
+        .copy-btn {
+            background: #444;
+            font-size: 12px;
+            padding: 4px 8px;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #27ae60;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 4px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 2000;
+        }
+        .toast.error { background: #e74c3c; }
+        .toast.active { opacity: 1; }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        .empty-state h2 { margin-bottom: 10px; }
+        .loader {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333;
+            border-top: 4px solid #00d9ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .checkbox-group input { width: auto; }
+        .playback-toggle {
+            display: flex;
+            gap: 5px;
+            background: #1a1a2e;
+            padding: 3px;
+            border-radius: 4px;
+        }
+        .playback-toggle button {
+            padding: 4px 10px;
+            font-size: 11px;
+            background: transparent;
+            color: #888;
+        }
+        .playback-toggle button.active {
+            background: #00d9ff;
+            color: #1a1a2e;
+        }
+        .playback-toggle button:hover:not(.active) {
+            background: #333;
+            color: #eee;
+        }
+        .latency-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 5px;
+        }
+        .latency-badge.hls { background: #3498db; }
+        .latency-badge.webrtc { background: #27ae60; }
+        .webrtc-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.7);
+        }
+        .webrtc-status.connecting { color: #f39c12; }
+        .webrtc-status.connected { color: #27ae60; }
+        .webrtc-status.failed { color: #e74c3c; }
+        /* Advanced Settings UI */
+        .settings-accordion {
+            border: 1px solid #333;
+            border-radius: 6px;
+            margin-top: 15px;
+            overflow: hidden;
+        }
+        .accordion-header {
+            background: #1a1a2e;
+            padding: 12px 15px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            user-select: none;
+        }
+        .accordion-header:hover { background: #252545; }
+        .accordion-header h4 { margin: 0; font-size: 14px; color: #00d9ff; }
+        .accordion-header .toggle-icon { transition: transform 0.2s; }
+        .accordion-header.open .toggle-icon { transform: rotate(180deg); }
+        .accordion-content {
+            display: none;
+            padding: 15px;
+            background: #16162a;
+        }
+        .accordion-content.open { display: block; }
+        .settings-section {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #333;
+        }
+        .settings-section:last-child { border-bottom: none; margin-bottom: 0; }
+        .settings-section h5 {
+            color: #888;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        .settings-grid .form-group { margin-bottom: 0; }
+        .setting-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .setting-item label {
+            font-size: 12px;
+            color: #aaa;
+        }
+        .setting-item input, .setting-item select {
+            padding: 8px 10px;
+            font-size: 13px;
+        }
+        .setting-item .help-text {
+            font-size: 10px;
+            color: #666;
+            margin-top: 2px;
+        }
+        .setting-item.full-width { grid-column: span 2; }
+        .range-with-value {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .range-with-value input[type="range"] { flex: 1; }
+        .range-with-value .value {
+            min-width: 35px;
+            text-align: center;
+            background: #1a1a2e;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .preset-buttons {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+        .preset-buttons button {
+            padding: 5px 10px;
+            font-size: 11px;
+            background: #333;
+        }
+        .preset-buttons button:hover { background: #444; }
+        .preset-buttons button.active { background: #00d9ff; color: #1a1a2e; }
+        /* NVR Import Styles */
+        .nvr-modal .modal-content { max-width: 800px; }
+        .nvr-form-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+        .nvr-form-row.auth { grid-template-columns: 1fr 1fr; }
+        .discovered-cameras {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #333;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+        .camera-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 15px;
+            border-bottom: 1px solid #333;
+            gap: 12px;
+        }
+        .camera-item:last-child { border-bottom: none; }
+        .camera-item:hover { background: #1a1a2e; }
+        .camera-item input[type="checkbox"] { width: 18px; height: 18px; }
+        .camera-item .camera-info { flex: 1; }
+        .camera-item .camera-name { font-weight: 600; margin-bottom: 4px; }
+        .camera-item .camera-url { font-size: 11px; color: #888; word-break: break-all; }
+        .camera-item .camera-status { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+        .camera-item .camera-status.online { background: #27ae60; }
+        .camera-item .camera-status.offline { background: #e74c3c; }
+        .camera-item .camera-status.unknown { background: #555; }
+        .nvr-info {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+        .nvr-info h4 { color: #00d9ff; margin-bottom: 10px; }
+        .nvr-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 13px; }
+        .nvr-info-item .label { color: #888; }
+        .camera-actions {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+            align-items: center;
+        }
+        .camera-actions button { padding: 6px 12px; font-size: 12px; }
+        .import-options {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            padding: 15px;
+            background: #1a1a2e;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+        .import-options .form-group { margin-bottom: 0; }
+        .import-results { margin-top: 15px; }
+        .import-result-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+        }
+        .import-result-item.success { color: #27ae60; }
+        .import-result-item.failed { color: #e74c3c; }
+        /* System Stats */
+        .system-stats {
+            display: flex;
+            gap: 15px;
+            background: #1a1a2e;
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 12px;
+            align-items: center;
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 60px;
+        }
+        .stat-label {
+            color: #888;
+            font-size: 10px;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+        }
+        .stat-value {
+            font-weight: 600;
+            color: #00d9ff;
+        }
+        .stat-bar {
+            width: 100%;
+            height: 3px;
+            background: #333;
+            border-radius: 2px;
+            margin-top: 3px;
+            overflow: hidden;
+        }
+        .stat-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+        .stat-bar-fill.low { background: #27ae60; }
+        .stat-bar-fill.medium { background: #f39c12; }
+        .stat-bar-fill.high { background: #e74c3c; }
+        .gpu-section {
+            border-left: 1px solid #333;
+            padding-left: 15px;
+        }
+        /* Toolbar and Controls */
+        .toolbar {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #252540;
+            border-radius: 8px;
+        }
+        .search-box {
+            flex: 1;
+            min-width: 200px;
+        }
+        .filter-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .filter-group select {
+            min-width: 120px;
+        }
+        .stats-bar {
+            display: flex;
+            gap: 15px;
+            font-size: 13px;
+            margin-left: auto;
+        }
+        .stats-bar .stat {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .stats-bar .stat-count {
+            background: #1a1a2e;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+        .stats-bar .stat-count.running { color: #27ae60; }
+        .stats-bar .stat-count.stopped { color: #888; }
+        .stats-bar .stat-count.error { color: #e74c3c; }
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+            padding: 15px;
+        }
+        .pagination button {
+            padding: 8px 15px;
+            min-width: 40px;
+        }
+        .pagination button:disabled {
+            opacity: 0.5;
+        }
+        .pagination .page-info {
+            color: #888;
+            font-size: 13px;
+        }
+        .per-page-select {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #888;
+        }
+        /* Batch Selection */
+        .batch-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            padding: 10px 15px;
+            background: #00d9ff22;
+            border: 1px solid #00d9ff44;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+        .batch-controls.hidden { display: none; }
+        .batch-controls .selected-count {
+            font-weight: 600;
+            color: #00d9ff;
+        }
+        .select-checkbox {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 22px;
+            height: 22px;
+            z-index: 100;
+            cursor: pointer;
+            accent-color: #00d9ff;
+            background: #252540;
+            border: 2px solid #00d9ff;
+            border-radius: 4px;
+            appearance: none;
+            -webkit-appearance: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .select-checkbox:checked {
+            background: #00d9ff;
+        }
+        .select-checkbox:checked::before {
+            content: '✓';
+            color: #1a1a2e;
+            font-weight: bold;
+            font-size: 14px;
+            line-height: 1;
+        }
+        .select-checkbox:hover {
+            border-color: #fff;
+            box-shadow: 0 0 5px rgba(0, 217, 255, 0.5);
+        }
+        .card { position: relative; }
+        .card.selected { outline: 2px solid #00d9ff; outline-offset: 2px; }
+        /* Auth screens */
+        .auth-screen {
+            display: none;
+            min-height: 100vh;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a2e;
+        }
+        .auth-screen.active { display: flex; }
+        .auth-box {
+            background: #252540;
+            padding: 40px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+        }
+        .auth-box h2 {
+            color: #00d9ff;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .auth-box p {
+            color: #888;
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        .auth-box .form-group { margin-bottom: 20px; }
+        .auth-box input {
+            width: 100%;
+            padding: 12px 15px;
+            font-size: 15px;
+        }
+        .auth-box button {
+            width: 100%;
+            padding: 12px;
+            font-size: 15px;
+            margin-top: 10px;
+        }
+        .auth-error {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            text-align: center;
+            display: none;
+        }
+        .auth-error.show { display: block; }
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .user-menu .username {
+            color: #888;
+            font-size: 13px;
+        }
+        .main-app { display: none; }
+        .main-app.active { display: block; }
+    </style>
+</head>
+<body>
+    <!-- Setup Screen -->
+    <div class="auth-screen" id="setupScreen">
+        <div class="auth-box">
+            <h2>Welcome</h2>
+            <p>Create your admin account to get started</p>
+            <div class="auth-error" id="setupError"></div>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="setupUsername" value="admin" placeholder="Username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="setupPassword" placeholder="Password (min 8 chars)">
+            </div>
+            <div class="form-group">
+                <label>Confirm Password</label>
+                <input type="password" id="setupConfirm" placeholder="Confirm password">
+            </div>
+            <button onclick="doSetup()">Create Account</button>
+        </div>
+    </div>
+
+    <!-- Login Screen -->
+    <div class="auth-screen" id="loginScreen">
+        <div class="auth-box">
+            <h2>Login</h2>
+            <p>Sign in to manage your streams</p>
+            <div class="auth-error" id="loginError"></div>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="loginUsername" placeholder="Username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="loginPassword" placeholder="Password">
+            </div>
+            <button onclick="doLogin()">Sign In</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div class="main-app" id="mainApp">
+    <div class="container">
+        <header>
+            <h1>RTSP Streaming Server</h1>
+            <div class="system-stats" id="systemStats">
+                <div class="stat-item">
+                    <span class="stat-label">CPU</span>
+                    <span class="stat-value" id="cpuValue">--%</span>
+                    <div class="stat-bar"><div class="stat-bar-fill low" id="cpuBar" style="width: 0%"></div></div>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">RAM</span>
+                    <span class="stat-value" id="ramValue">--GB</span>
+                    <div class="stat-bar"><div class="stat-bar-fill low" id="ramBar" style="width: 0%"></div></div>
+                </div>
+                <div class="stat-item gpu-section" id="gpuStats" style="display: none;">
+                    <span class="stat-label">GPU</span>
+                    <span class="stat-value" id="gpuValue">--%</span>
+                    <div class="stat-bar"><div class="stat-bar-fill low" id="gpuBar" style="width: 0%"></div></div>
+                </div>
+                <div class="stat-item" id="gpuMemStats" style="display: none;">
+                    <span class="stat-label">VRAM</span>
+                    <span class="stat-value" id="vramValue">--GB</span>
+                    <div class="stat-bar"><div class="stat-bar-fill low" id="vramBar" style="width: 0%"></div></div>
+                </div>
+            </div>
+            <div class="user-menu">
+                <span class="username" id="currentUser">admin</span>
+                <button class="secondary" onclick="openNvrModal()">Import from NVR</button>
+                <button class="secondary" onclick="openAddModal()">+ Add Stream</button>
+                <button class="secondary" onclick="openSettingsModal()">Settings</button>
+                <button class="secondary" onclick="doLogout()">Logout</button>
+            </div>
+        </header>
+
+        <!-- Toolbar with search, filters, and stats -->
+        <div class="toolbar" id="toolbar">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search streams..." onkeyup="debounceSearch()">
+            </div>
+            <div class="filter-group">
+                <select id="statusFilter" onchange="loadStreams()">
+                    <option value="">All Status</option>
+                    <option value="running">Running</option>
+                    <option value="stopped">Stopped</option>
+                    <option value="error">Error</option>
+                    <option value="starting">Starting</option>
+                </select>
+                <select id="modeFilter" onchange="loadStreams()">
+                    <option value="">All Modes</option>
+                    <option value="on_demand">On Demand</option>
+                    <option value="always_on">Always On</option>
+                    <option value="smart">Smart</option>
+                </select>
+            </div>
+            <div class="stats-bar" id="statsBar">
+                <div class="stat">Total: <span class="stat-count" id="totalCount">0</span></div>
+                <div class="stat">Running: <span class="stat-count running" id="runningCount">0</span></div>
+                <div class="stat">Stopped: <span class="stat-count stopped" id="stoppedCount">0</span></div>
+                <div class="stat">Errors: <span class="stat-count error" id="errorCount">0</span></div>
+            </div>
+        </div>
+
+        <!-- Batch operations bar (hidden by default) -->
+        <div class="batch-controls hidden" id="batchControls">
+            <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+            <span class="selected-count"><span id="selectedCount">0</span> selected</span>
+            <button onclick="batchStart()">Start Selected</button>
+            <button onclick="batchStop()">Stop Selected</button>
+            <button onclick="batchRestart()">Restart Selected</button>
+            <button onclick="batchAutoName()" id="batchAutoNameBtn" title="Use AI to suggest camera names based on video content">Auto-Name (AI)</button>
+            <button class="danger" onclick="batchDelete()">Delete Selected</button>
+            <button class="secondary" onclick="clearSelection()">Clear</button>
+        </div>
+
+        <div id="streamGrid" class="grid">
+            <div class="empty-state">
+                <h2>No streams configured</h2>
+                <p>Add your first RTSP stream to get started</p>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination" style="display: none;">
+            <button onclick="goToPage(1)" id="firstPageBtn">&laquo;</button>
+            <button onclick="goToPage(currentPage - 1)" id="prevPageBtn">&lsaquo;</button>
+            <span class="page-info">Page <span id="currentPageNum">1</span> of <span id="totalPagesNum">1</span></span>
+            <button onclick="goToPage(currentPage + 1)" id="nextPageBtn">&rsaquo;</button>
+            <button onclick="goToPage(totalPages)" id="lastPageBtn">&raquo;</button>
+            <div class="per-page-select">
+                <span>Per page:</span>
+                <select id="perPageSelect" onchange="changePerPage()">
+                    <option value="12">12</option>
+                    <option value="20" selected>20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Stream Modal -->
+    <div id="streamModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Add Stream</h3>
+                <button class="secondary" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="streamId">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="streamName" placeholder="Camera name">
+                </div>
+                <div class="form-group">
+                    <label>RTSP URL</label>
+                    <input type="text" id="streamUrl" placeholder="rtsp://user:pass@ip:port/path">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Mode</label>
+                        <select id="streamMode">
+                            <option value="on_demand">On Demand (start when viewed)</option>
+                            <option value="always_on">Always On (24/7)</option>
+                            <option value="smart">Smart (auto-switch)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Keep Alive (seconds)</label>
+                        <input type="number" id="keepAlive" value="60" min="10" max="3600">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Latency Mode</label>
+                    <select id="latencyMode">
+                        <option value="stable">Stable (5-10s latency, recommended)</option>
+                        <option value="low">Low Latency (2-4s, may buffer more)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="useTranscode">
+                        <label for="useTranscode" style="margin: 0;">Force transcoding (higher CPU, better compatibility)</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <button class="secondary" onclick="analyzeStream()" id="analyzeBtn">Analyze Stream</button>
+                    <div id="analyzeResults"></div>
+                </div>
+
+                <!-- Advanced FFmpeg Settings -->
+                <div class="settings-accordion">
+                    <div class="accordion-header" onclick="toggleAccordion(this)">
+                        <h4>Advanced FFmpeg Settings</h4>
+                        <span class="toggle-icon">&#9660;</span>
+                    </div>
+                    <div class="accordion-content">
+                        <!-- Input Settings -->
+                        <div class="settings-section">
+                            <h5>Input Settings</h5>
+                            <div class="settings-grid">
+                                <div class="setting-item">
+                                    <label>RTSP Transport</label>
+                                    <select id="ffRtspTransport">
+                                        <option value="">Default (TCP)</option>
+                                        <option value="tcp">TCP (reliable)</option>
+                                        <option value="udp">UDP (lower latency)</option>
+                                    </select>
+                                    <span class="help-text">TCP is more reliable, UDP may have lower latency</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Buffer Size (bytes)</label>
+                                    <select id="ffBufferSize">
+                                        <option value="">Default (1MB)</option>
+                                        <option value="524288">512 KB (low latency)</option>
+                                        <option value="1048576">1 MB (balanced)</option>
+                                        <option value="2097152">2 MB (stable)</option>
+                                        <option value="4194304">4 MB (high latency)</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Socket Timeout (seconds)</label>
+                                    <select id="ffStimeout">
+                                        <option value="">Default (5s)</option>
+                                        <option value="3000000">3 seconds</option>
+                                        <option value="5000000">5 seconds</option>
+                                        <option value="10000000">10 seconds</option>
+                                        <option value="15000000">15 seconds</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Video Encoding Settings -->
+                        <div class="settings-section">
+                            <h5>Video Encoding (when transcoding)</h5>
+                            <div class="settings-grid">
+                                <div class="setting-item">
+                                    <label>Encoder Preset</label>
+                                    <select id="ffPreset">
+                                        <option value="">Default (ultrafast)</option>
+                                        <option value="ultrafast">Ultrafast (lowest CPU)</option>
+                                        <option value="superfast">Superfast</option>
+                                        <option value="veryfast">Very Fast</option>
+                                        <option value="faster">Faster</option>
+                                        <option value="fast">Fast</option>
+                                        <option value="medium">Medium (balanced)</option>
+                                    </select>
+                                    <span class="help-text">Slower = better quality, higher CPU</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Tune</label>
+                                    <select id="ffTune">
+                                        <option value="">Default (zerolatency)</option>
+                                        <option value="zerolatency">Zero Latency (live)</option>
+                                        <option value="film">Film</option>
+                                        <option value="animation">Animation</option>
+                                        <option value="grain">Grain (preserve noise)</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>H.264 Profile</label>
+                                    <select id="ffProfile">
+                                        <option value="">Default (baseline)</option>
+                                        <option value="baseline">Baseline (max compatibility)</option>
+                                        <option value="main">Main</option>
+                                        <option value="high">High (best quality)</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Quality (CRF)</label>
+                                    <div class="range-with-value">
+                                        <input type="range" id="ffCrf" min="18" max="35" value="23" oninput="updateCrfValue()">
+                                        <span class="value" id="ffCrfValue">23</span>
+                                    </div>
+                                    <span class="help-text">Lower = better quality, larger files (18-35)</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Video Bitrate</label>
+                                    <select id="ffVideoBitrate">
+                                        <option value="">Auto (CRF-based)</option>
+                                        <option value="500k">500 Kbps (low)</option>
+                                        <option value="1M">1 Mbps</option>
+                                        <option value="2M">2 Mbps</option>
+                                        <option value="3M">3 Mbps</option>
+                                        <option value="4M">4 Mbps</option>
+                                        <option value="6M">6 Mbps (high)</option>
+                                        <option value="8M">8 Mbps</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Scale / Resolution</label>
+                                    <select id="ffScale">
+                                        <option value="">Original</option>
+                                        <option value="1920:1080">1080p (1920x1080)</option>
+                                        <option value="1280:720">720p (1280x720)</option>
+                                        <option value="854:480">480p (854x480)</option>
+                                        <option value="640:360">360p (640x360)</option>
+                                        <option value="-1:720">720p (auto width)</option>
+                                        <option value="-1:480">480p (auto width)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Audio Settings -->
+                        <div class="settings-section">
+                            <h5>Audio Settings</h5>
+                            <div class="settings-grid">
+                                <div class="setting-item">
+                                    <label>Audio Mode</label>
+                                    <select id="ffAudioMode">
+                                        <option value="">Auto (copy if compatible)</option>
+                                        <option value="transcode">Force Transcode to AAC</option>
+                                        <option value="disable">Disable Audio</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Audio Bitrate</label>
+                                    <select id="ffAudioBitrate">
+                                        <option value="">Default (128k)</option>
+                                        <option value="64k">64 Kbps (low)</option>
+                                        <option value="96k">96 Kbps</option>
+                                        <option value="128k">128 Kbps</option>
+                                        <option value="192k">192 Kbps</option>
+                                        <option value="256k">256 Kbps (high)</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Audio Channels</label>
+                                    <select id="ffAudioChannels">
+                                        <option value="">Default (stereo)</option>
+                                        <option value="1">Mono</option>
+                                        <option value="2">Stereo</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- HLS Output Settings -->
+                        <div class="settings-section">
+                            <h5>HLS Output Settings</h5>
+                            <div class="settings-grid">
+                                <div class="setting-item">
+                                    <label>Segment Duration (seconds)</label>
+                                    <select id="ffHlsTime">
+                                        <option value="">Auto (based on latency mode)</option>
+                                        <option value="1">1 second (low latency)</option>
+                                        <option value="2">2 seconds</option>
+                                        <option value="3">3 seconds (balanced)</option>
+                                        <option value="4">4 seconds</option>
+                                        <option value="6">6 seconds (stable)</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Playlist Size (segments)</label>
+                                    <select id="ffHlsListSize">
+                                        <option value="">Auto (based on latency mode)</option>
+                                        <option value="3">3 segments</option>
+                                        <option value="4">4 segments</option>
+                                        <option value="5">5 segments</option>
+                                        <option value="6">6 segments</option>
+                                        <option value="8">8 segments</option>
+                                        <option value="10">10 segments</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Presets -->
+                        <div class="settings-section">
+                            <h5>Quick Presets</h5>
+                            <div class="preset-buttons">
+                                <button type="button" onclick="applyPreset('default')">Default</button>
+                                <button type="button" onclick="applyPreset('lowLatency')">Low Latency</button>
+                                <button type="button" onclick="applyPreset('highQuality')">High Quality</button>
+                                <button type="button" onclick="applyPreset('lowBandwidth')">Low Bandwidth</button>
+                                <button type="button" onclick="applyPreset('compatibility')">Max Compatibility</button>
+                            </div>
+                        </div>
+
+                        <!-- Raw JSON (for advanced users) -->
+                        <div class="settings-section">
+                            <h5>Raw JSON Override (Advanced)</h5>
+                            <textarea id="ffmpegOverrides" placeholder='{"custom_option": "value"}' style="height: 60px; font-size: 12px;"></textarea>
+                            <span class="help-text">For options not available above. Will be merged with UI settings.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary" onclick="closeModal()">Cancel</button>
+                <button onclick="saveStream()">Save Stream</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Modal -->
+    <div id="shareModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Share Stream</h3>
+                <button class="secondary" onclick="closeShareModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>HLS URL (use in video players)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="shareHlsUrl" readonly style="flex: 1;">
+                        <button class="copy-btn" onclick="copyToClipboard('shareHlsUrl')">Copy</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Player URL (direct browser playback)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="sharePlayerUrl" readonly style="flex: 1;">
+                        <button class="copy-btn" onclick="copyToClipboard('sharePlayerUrl')">Copy</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Token expires in</label>
+                    <select id="tokenExpiry" onchange="regenerateToken()">
+                        <option value="1">1 hour</option>
+                        <option value="24" selected>24 hours</option>
+                        <option value="168">1 week</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NVR Import Modal -->
+    <div id="nvrModal" class="modal nvr-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Import from NVR</h3>
+                <button class="secondary" onclick="closeNvrModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- NVR Connection Form -->
+                <div id="nvrForm">
+                    <div class="nvr-form-row">
+                        <div class="form-group">
+                            <label>NVR Address</label>
+                            <input type="text" id="nvrHost" placeholder="192.168.1.100">
+                        </div>
+                        <div class="form-group">
+                            <label>HTTP Port</label>
+                            <input type="number" id="nvrPort" value="80" min="1" max="65535">
+                        </div>
+                        <div class="form-group">
+                            <label>RTSP Port</label>
+                            <input type="number" id="nvrRtspPort" value="554" min="1" max="65535">
+                        </div>
+                    </div>
+                    <div class="nvr-form-row auth">
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" id="nvrUsername" placeholder="admin">
+                        </div>
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" id="nvrPassword" placeholder="password">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>NVR Brand</label>
+                        <select id="nvrBrand">
+                            <option value="auto">Auto-Detect</option>
+                            <option value="hikvision">Hikvision</option>
+                            <option value="dahua">Dahua</option>
+                            <option value="uniview">Uniview</option>
+                            <option value="axis">Axis</option>
+                            <option value="milesight">Milesight</option>
+                            <option value="bosch">Bosch</option>
+                            <option value="hanwha">Hanwha (Samsung Wisenet)</option>
+                            <option value="onvif">ONVIF (Generic)</option>
+                        </select>
+                    </div>
+                    <button onclick="discoverNvr()" id="discoverBtn">Discover Cameras</button>
+                </div>
+
+                <!-- Discovery Results -->
+                <div id="nvrResults" style="display: none;">
+                    <div class="nvr-info" id="nvrInfo"></div>
+
+                    <div class="camera-actions">
+                        <button onclick="selectAllCameras()">Select All</button>
+                        <button onclick="selectNoneCameras()">Select None</button>
+                        <button onclick="autoNameCameras()" id="autoNameBtn" title="Use AI to suggest camera names based on video content">Auto-Name (AI)</button>
+                        <span id="selectedCount">0 selected</span>
+                    </div>
+
+                    <div class="discovered-cameras" id="discoveredCameras"></div>
+
+                    <div class="import-options">
+                        <div class="form-group">
+                            <label>Mode</label>
+                            <select id="importMode">
+                                <option value="on_demand">On Demand</option>
+                                <option value="always_on">Always On</option>
+                                <option value="smart">Smart</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Latency</label>
+                            <select id="importLatency">
+                                <option value="stable">Stable (recommended)</option>
+                                <option value="low">Low Latency</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Stream Quality</label>
+                            <select id="importQuality">
+                                <option value="main">Main Stream (high quality)</option>
+                                <option value="sub">Sub Stream (low bandwidth)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="importResults" class="import-results" style="display: none;"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary" onclick="closeNvrModal()">Close</button>
+                <button id="backToFormBtn" class="secondary" onclick="backToNvrForm()" style="display: none;">Back</button>
+                <button id="importBtn" onclick="importSelectedCameras()" style="display: none;">Import Selected</button>
+            </div>
+        </div>
+    </div>
+    </div> <!-- End main-app -->
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Settings</h3>
+                <button class="secondary" onclick="closeSettingsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Claude API Key</label>
+                    <p style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                        Used for AI-powered camera naming. Get your API key from
+                        <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
+                    </p>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="password" id="claudeApiKey" placeholder="sk-ant-..." style="flex: 1;">
+                        <button onclick="toggleApiKeyVisibility()" class="secondary" style="width: 60px;">Show</button>
+                    </div>
+                    <div id="claudeApiStatus" style="font-size: 12px; margin-top: 4px;"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary" onclick="closeSettingsModal()">Cancel</button>
+                <button class="danger" onclick="removeClaudeApiKey()" id="removeApiKeyBtn" style="display: none;">Remove Key</button>
+                <button onclick="saveClaudeApiKey()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let streams = [];
+        let players = {};  // HLS players
+        let webrtcConnections = {};  // WebRTC peer connections
+        let heartbeatIntervals = {};
+        let currentShareStreamId = null;
+        let playbackModes = {};  // Track HLS vs WebRTC per stream
+        let webrtcAvailable = false;  // Check if server has WebRTC
+
+        // Pagination state
+        let currentPage = 1;
+        let perPage = 20;
+        let totalPages = 1;
+        let totalStreams = 0;
+        let searchTimeout = null;
+
+        // Selection state for batch operations
+        let selectedStreams = new Set();
+
+        // Auth functions
+        function showScreen(screen) {
+            document.getElementById('setupScreen').classList.remove('active');
+            document.getElementById('loginScreen').classList.remove('active');
+            document.getElementById('mainApp').classList.remove('active');
+            document.getElementById(screen).classList.add('active');
+        }
+
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/auth/status', { credentials: 'include' });
+                const data = await res.json();
+
+                if (!data.setup_complete) {
+                    showScreen('setupScreen');
+                    return false;
+                }
+
+                if (!data.authenticated) {
+                    showScreen('loginScreen');
+                    return false;
+                }
+
+                currentUser = data.user;
+                document.getElementById('currentUser').textContent = data.user.username;
+                showScreen('mainApp');
+                return true;
+            } catch (e) {
+                console.error('Auth check failed:', e);
+                showScreen('loginScreen');
+                return false;
+            }
+        }
+
+        async function doSetup() {
+            const username = document.getElementById('setupUsername').value;
+            const password = document.getElementById('setupPassword').value;
+            const confirm = document.getElementById('setupConfirm').value;
+            const errorEl = document.getElementById('setupError');
+
+            if (password.length < 8) {
+                errorEl.textContent = 'Password must be at least 8 characters';
+                errorEl.classList.add('show');
+                return;
+            }
+
+            if (password !== confirm) {
+                errorEl.textContent = 'Passwords do not match';
+                errorEl.classList.add('show');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/auth/setup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || 'Setup failed');
+                }
+
+                const data = await res.json();
+                currentUser = data.user;
+                document.getElementById('currentUser').textContent = data.user.username;
+                showScreen('mainApp');
+                init();
+            } catch (e) {
+                errorEl.textContent = e.message;
+                errorEl.classList.add('show');
+            }
+        }
+
+        async function doLogin() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            const errorEl = document.getElementById('loginError');
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || 'Login failed');
+                }
+
+                const data = await res.json();
+                currentUser = data.user;
+                document.getElementById('currentUser').textContent = data.user.username;
+                showScreen('mainApp');
+                init();
+            } catch (e) {
+                errorEl.textContent = e.message;
+                errorEl.classList.add('show');
+            }
+        }
+
+        async function doLogout() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+            } catch (e) {}
+            currentUser = null;
+            showScreen('loginScreen');
+        }
+
+        // Handle enter key on login/setup forms
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('loginPassword').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') doLogin();
+            });
+            document.getElementById('setupConfirm').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') doSetup();
+            });
+        });
+
+        // System stats update
+        async function updateSystemStats() {
+            try {
+                const res = await fetch('/api/system/stats');
+                if (!res.ok) return;
+                const stats = await res.json();
+
+                // CPU
+                const cpuPercent = stats.cpu_percent || 0;
+                document.getElementById('cpuValue').textContent = `${cpuPercent.toFixed(0)}%`;
+                const cpuBar = document.getElementById('cpuBar');
+                cpuBar.style.width = `${cpuPercent}%`;
+                cpuBar.className = 'stat-bar-fill ' + getBarClass(cpuPercent);
+
+                // RAM
+                const ramPercent = stats.ram_percent || 0;
+                const ramUsedGB = (stats.ram_used / 1024).toFixed(1);
+                const ramTotalGB = (stats.ram_total / 1024).toFixed(0);
+                document.getElementById('ramValue').textContent = `${ramUsedGB}/${ramTotalGB}G`;
+                const ramBar = document.getElementById('ramBar');
+                ramBar.style.width = `${ramPercent}%`;
+                ramBar.className = 'stat-bar-fill ' + getBarClass(ramPercent);
+
+                // GPU (if available)
+                if (stats.gpu) {
+                    document.getElementById('gpuStats').style.display = 'flex';
+                    document.getElementById('gpuMemStats').style.display = 'flex';
+
+                    // GPU utilization
+                    const gpuPercent = stats.gpu.gpu_utilization || 0;
+                    document.getElementById('gpuValue').textContent = `${gpuPercent.toFixed(0)}%`;
+                    const gpuBar = document.getElementById('gpuBar');
+                    gpuBar.style.width = `${gpuPercent}%`;
+                    gpuBar.className = 'stat-bar-fill ' + getBarClass(gpuPercent);
+
+                    // VRAM
+                    const vramPercent = stats.gpu.memory_percent || 0;
+                    const vramUsedGB = (stats.gpu.memory_used / 1024).toFixed(1);
+                    const vramTotalGB = (stats.gpu.memory_total / 1024).toFixed(0);
+                    document.getElementById('vramValue').textContent = `${vramUsedGB}/${vramTotalGB}G`;
+                    const vramBar = document.getElementById('vramBar');
+                    vramBar.style.width = `${vramPercent}%`;
+                    vramBar.className = 'stat-bar-fill ' + getBarClass(vramPercent);
+                } else {
+                    document.getElementById('gpuStats').style.display = 'none';
+                    document.getElementById('gpuMemStats').style.display = 'none';
+                }
+            } catch (e) {
+                console.error('Failed to fetch system stats:', e);
+            }
+        }
+
+        function getBarClass(percent) {
+            if (percent >= 80) return 'high';
+            if (percent >= 50) return 'medium';
+            return 'low';
+        }
+
+        // Start system stats updates
+        updateSystemStats();
+        setInterval(updateSystemStats, 2000);
+
+        // Check WebRTC availability on server
+        async function checkWebRTCAvailability() {
+            try {
+                const res = await fetch('/api/webrtc/status');
+                const data = await res.json();
+                webrtcAvailable = data.available;
+                console.log('WebRTC available:', webrtcAvailable);
+            } catch (e) {
+                webrtcAvailable = false;
+                console.log('WebRTC check failed:', e);
+            }
+        }
+        checkWebRTCAvailability();
+
+        // API helpers
+        async function api(method, path, body = null) {
+            const url = `/api/streams${path}`;
+            console.log(`[API] ${method} ${url}`, body ? JSON.stringify(body) : '');
+            const options = {
+                method,
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            };
+            if (body) options.body = JSON.stringify(body);
+
+            try {
+                const res = await fetch(url, options);
+                console.log(`[API] ${method} ${url} -> ${res.status}`);
+                if (res.status === 401) {
+                    showScreen('loginScreen');
+                    throw new Error('Session expired');
+                }
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+                    throw new Error(err.detail || 'Request failed');
+                }
+                if (res.status === 204) return null;
+                return res.json();
+            } catch (e) {
+                console.error(`[API] ${method} ${url} failed:`, e);
+                throw e;
+            }
+        }
+
+        // Stream management
+        // Search debounce
+        function debounceSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                currentPage = 1;
+                loadStreams();
+            }, 300);
+        }
+
+        async function loadStreams() {
+            try {
+                const search = document.getElementById('searchInput').value;
+                const status = document.getElementById('statusFilter').value;
+                const mode = document.getElementById('modeFilter').value;
+
+                let url = `?page=${currentPage}&per_page=${perPage}`;
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+                if (status) url += `&status=${status}`;
+                if (mode) url += `&mode=${mode}`;
+
+                const data = await api('GET', url);
+                streams = data.streams;
+                totalStreams = data.total;
+                totalPages = data.total_pages;
+
+                // Update stats
+                document.getElementById('totalCount').textContent = data.counts.total || 0;
+                document.getElementById('runningCount').textContent = data.counts.running || 0;
+                document.getElementById('stoppedCount').textContent = data.counts.stopped || 0;
+                document.getElementById('errorCount').textContent = data.counts.error || 0;
+
+                renderStreams();
+                updatePagination();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        function updatePagination() {
+            const pagination = document.getElementById('pagination');
+            if (totalPages <= 1) {
+                pagination.style.display = 'none';
+                return;
+            }
+            pagination.style.display = 'flex';
+            document.getElementById('currentPageNum').textContent = currentPage;
+            document.getElementById('totalPagesNum').textContent = totalPages;
+            document.getElementById('firstPageBtn').disabled = currentPage <= 1;
+            document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+            document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+            document.getElementById('lastPageBtn').disabled = currentPage >= totalPages;
+        }
+
+        function goToPage(page) {
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            loadStreams();
+        }
+
+        function changePerPage() {
+            perPage = parseInt(document.getElementById('perPageSelect').value);
+            currentPage = 1;
+            loadStreams();
+        }
+
+        function renderStreams() {
+            const grid = document.getElementById('streamGrid');
+
+            if (streams.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <h2>No streams configured</h2>
+                        <p>Add your first RTSP stream to get started</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Check which streams already have active players (don't destroy them)
+            const activePlayerIds = new Set([
+                ...Object.keys(players).map(Number),
+                ...Object.keys(webrtcConnections).map(Number)
+            ]);
+
+            grid.innerHTML = streams.map(s => {
+                const mode = playbackModes[s.id] || 'hls';
+                const isSelected = selectedStreams.has(s.id);
+                return `
+                <div class="card ${isSelected ? 'selected' : ''}" data-stream-id="${s.id}">
+                    <input type="checkbox" class="select-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleStreamSelection('${s.id}', this.checked)">
+                    <div class="card-header">
+                        <span class="card-title">${escapeHtml(s.name)}</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            ${webrtcAvailable ? `
+                            <div class="playback-toggle">
+                                <button class="${mode === 'hls' ? 'active' : ''}" onclick="setPlaybackMode('${s.id}', 'hls')">HLS</button>
+                                <button class="${mode === 'webrtc' ? 'active' : ''}" onclick="setPlaybackMode('${s.id}', 'webrtc')">WebRTC</button>
+                            </div>
+                            ` : ''}
+                            <span class="status ${s.status}">${s.status}</span>
+                        </div>
+                    </div>
+                    <div class="video-container" id="video-${s.id}">
+                        <div class="video-placeholder">
+                            ${s.is_running ? '<div class="loader"></div>' : 'Click Play to start'}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        ${s.last_error ? `<div class="error-box">${escapeHtml(s.last_error)}</div>` : ''}
+                        <div class="stream-info">
+                            <div class="stream-info-item">
+                                <span class="label">Codec</span>
+                                <span>${s.video_codec || 'Unknown'}</span>
+                            </div>
+                            <div class="stream-info-item">
+                                <span class="label">Resolution</span>
+                                <span>${s.resolution || 'Unknown'}</span>
+                            </div>
+                            <div class="stream-info-item">
+                                <span class="label">Mode</span>
+                                <span>${s.mode.replace('_', ' ')}</span>
+                            </div>
+                            <div class="stream-info-item">
+                                <span class="label">Latency</span>
+                                <span>${(s.latency_mode || 'stable') === 'low' ? 'Low (2-4s)' : 'Reliable (10-24s)'}</span>
+                            </div>
+                        </div>
+                        <div class="stream-actions">
+                            ${s.is_running ?
+                                `<button onclick="playStream('${s.id}')">Play</button>
+                                 <button class="secondary" onclick="stopStream('${s.id}')">Stop</button>` :
+                                `<button onclick="startStream('${s.id}')">Start</button>`
+                            }
+                            <button class="secondary" onclick="shareStream('${s.id}')">Share</button>
+                            <button class="secondary" onclick="editStream('${s.id}')">Edit</button>
+                            <button class="danger" onclick="deleteStream('${s.id}')">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `}).join('');
+
+            // Only auto-play streams that don't have players yet
+            streams.forEach(s => {
+                if (s.is_running && !activePlayerIds.has(s.id)) {
+                    setTimeout(() => playStream(s.id), 500);
+                }
+            });
+        }
+
+        async function startStream(id) {
+            try {
+                await api('POST', `/${id}/start`);
+                showToast('Stream starting...');
+                setTimeout(loadStreams, 1000);
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function stopStream(id) {
+            try {
+                stopPlayer(id);
+                await api('POST', `/${id}/stop`);
+                showToast('Stream stopped');
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        // Set playback mode for a stream
+        function setPlaybackMode(id, mode) {
+            const wasPlaying = players[id] || webrtcConnections[id];
+            stopPlayer(id);
+            playbackModes[id] = mode;
+            renderStreams();
+            // If it was playing, restart with new mode
+            if (wasPlaying) {
+                const stream = streams.find(s => s.id === id);
+                if (stream && stream.is_running) {
+                    setTimeout(() => playStream(id), 100);
+                }
+            }
+        }
+
+        async function playStream(id) {
+            // Don't restart if already playing
+            if (players[id] || webrtcConnections[id]) {
+                console.log('Stream', id, 'already playing');
+                return;
+            }
+
+            const mode = playbackModes[id] || 'hls';
+
+            if (mode === 'webrtc' && webrtcAvailable) {
+                await playStreamWebRTC(id);
+            } else {
+                await playStreamHLS(id);
+            }
+        }
+
+        async function playStreamHLS(id) {
+            // Don't restart if already playing
+            if (players[id]) {
+                console.log('HLS player for stream', id, 'already exists');
+                return;
+            }
+
+            try {
+                // Get token
+                const token = await api('GET', `/${id}/token`);
+                const container = document.getElementById(`video-${id}`);
+
+                // Get stream's latency mode
+                const stream = streams.find(s => s.id === id);
+                const isLowLatency = stream && stream.latency_mode === 'low';
+
+                // Create video element
+                container.innerHTML = '<video id="vid-' + id + '" controls autoplay muted></video>';
+                const video = document.getElementById(`vid-${id}`);
+
+                if (Hls.isSupported()) {
+                    // Configure HLS.js based on latency mode
+                    const hlsConfig = isLowLatency ? {
+                        // Low latency mode (2-4 seconds)
+                        enableWorker: true,
+                        lowLatencyMode: true,
+                        liveSyncDurationCount: 2,
+                        liveMaxLatencyDurationCount: 4,
+                        liveDurationInfinity: true,
+                        highBufferWatchdogPeriod: 1,
+                        maxBufferLength: 4,
+                        maxMaxBufferLength: 8,
+                        maxBufferSize: 0,
+                        maxBufferHole: 0.5,
+                        startLevel: -1,
+                        backBufferLength: 10,
+                        // Stall recovery
+                        nudgeMaxRetry: 5,
+                        nudgeOffset: 0.1,
+                    } : {
+                        // RELIABLE mode - maximum stability (10-24s buffer)
+                        enableWorker: true,
+                        lowLatencyMode: false,
+                        liveSyncDurationCount: 4,          // Sync 4 segments behind live edge
+                        liveMaxLatencyDurationCount: 8,    // Allow up to 8 segments behind
+                        liveDurationInfinity: true,
+                        highBufferWatchdogPeriod: 3,       // Check buffer every 3 seconds
+                        maxBufferLength: 30,               // Buffer up to 30 seconds
+                        maxMaxBufferLength: 60,            // Allow up to 60 seconds buffer
+                        maxBufferSize: 0,                  // No size limit
+                        maxBufferHole: 2,                  // Allow 2 second gaps
+                        startLevel: -1,                    // Auto quality
+                        backBufferLength: 30,              // Keep 30 seconds back buffer
+                        // Stall recovery - CRITICAL for reliability
+                        nudgeMaxRetry: 10,                 // Try 10 times to recover from stall
+                        nudgeOffset: 0.2,                  // Nudge playhead by 0.2s each retry
+                        // Level loading retries
+                        levelLoadingMaxRetry: 6,           // Retry level loading 6 times
+                        levelLoadingRetryDelay: 500,       // 500ms between retries
+                        levelLoadingTimeOut: 15000,        // 15 second timeout
+                        // Manifest loading
+                        manifestLoadingMaxRetry: 4,
+                        manifestLoadingRetryDelay: 500,
+                        manifestLoadingTimeOut: 15000,
+                        // Fragment loading - KEY for reliability
+                        fragLoadingMaxRetry: 6,            // Retry fragment loading 6 times
+                        fragLoadingRetryDelay: 500,        // 500ms between retries
+                        fragLoadingTimeOut: 20000,         // 20 second timeout per fragment
+                    };
+
+                    const hls = new Hls(hlsConfig);
+                    hls.loadSource(token.hls_url);
+                    hls.attachMedia(video);
+
+                    // Comprehensive error handling with automatic recovery
+                    hls.on(Hls.Events.ERROR, (e, data) => {
+                        console.warn('HLS event:', data.type, data.details);
+
+                        if (data.fatal) {
+                            console.error('HLS fatal error:', data);
+
+                            switch (data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    // Network error - try to recover
+                                    console.log('Network error, attempting recovery...');
+                                    hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    // Media error - try to recover
+                                    console.log('Media error, attempting recovery...');
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    // Unrecoverable error - reload stream
+                                    console.log('Unrecoverable error, reloading stream...');
+                                    setTimeout(() => {
+                                        hls.destroy();
+                                        delete players[id];
+                                        playStreamHLS(id);  // Auto-retry
+                                    }, 2000);
+                            }
+                        }
+                    });
+
+                    // Handle buffer stalls
+                    let stallCount = 0;
+                    video.addEventListener('waiting', () => {
+                        stallCount++;
+                        console.log('Buffer stall detected, count:', stallCount);
+
+                        // If too many stalls, try to recover
+                        if (stallCount > 3) {
+                            console.log('Too many stalls, attempting recovery...');
+                            stallCount = 0;
+
+                            // Skip ahead slightly to catch up
+                            if (video.currentTime > 0 && hls.liveSyncPosition) {
+                                video.currentTime = hls.liveSyncPosition;
+                            }
+                        }
+                    });
+
+                    video.addEventListener('playing', () => {
+                        stallCount = 0;  // Reset stall count when playing
+                    });
+
+                    players[id] = hls;
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = token.hls_url;
+                }
+
+                // Start heartbeat
+                startHeartbeat(id, token.token);
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function playStreamWebRTC(id) {
+            // Don't restart if already connected
+            if (webrtcConnections[id]) {
+                console.log('WebRTC connection for stream', id, 'already exists');
+                return;
+            }
+
+            const container = document.getElementById(`video-${id}`);
+
+            try {
+                // Create video element with status indicator
+                container.innerHTML = `
+                    <video id="vid-${id}" controls autoplay muted playsinline></video>
+                    <div id="webrtc-status-${id}" class="webrtc-status connecting">Connecting...</div>
+                `;
+                const video = document.getElementById(`vid-${id}`);
+                const statusEl = document.getElementById(`webrtc-status-${id}`);
+
+                // Connect via WebSocket for signaling
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const ws = new WebSocket(`${wsProtocol}//${window.location.host}/api/webrtc/ws/${id}`);
+
+                let pc = null;
+
+                ws.onopen = () => {
+                    console.log('WebRTC WebSocket connected');
+                };
+
+                ws.onmessage = async (event) => {
+                    const data = JSON.parse(event.data);
+                    console.log('WebRTC message:', data.type);
+
+                    if (data.type === 'offer') {
+                        // Create peer connection
+                        pc = new RTCPeerConnection({
+                            iceServers: [
+                                { urls: 'stun:stun.l.google.com:19302' }
+                            ]
+                        });
+
+                        // Handle incoming tracks
+                        pc.ontrack = (event) => {
+                            console.log('Got track:', event.track.kind);
+                            if (event.streams && event.streams[0]) {
+                                video.srcObject = event.streams[0];
+                            }
+                        };
+
+                        // Handle ICE candidates
+                        pc.onicecandidate = (event) => {
+                            if (event.candidate) {
+                                ws.send(JSON.stringify({
+                                    type: 'ice-candidate',
+                                    candidate: event.candidate
+                                }));
+                            }
+                        };
+
+                        // Handle connection state
+                        pc.onconnectionstatechange = () => {
+                            console.log('WebRTC state:', pc.connectionState);
+                            switch (pc.connectionState) {
+                                case 'connecting':
+                                    statusEl.className = 'webrtc-status connecting';
+                                    statusEl.textContent = 'Connecting...';
+                                    break;
+                                case 'connected':
+                                    statusEl.className = 'webrtc-status connected';
+                                    statusEl.textContent = 'Live (WebRTC)';
+                                    setTimeout(() => statusEl.style.display = 'none', 3000);
+                                    break;
+                                case 'failed':
+                                case 'disconnected':
+                                    statusEl.className = 'webrtc-status failed';
+                                    statusEl.textContent = 'Connection failed';
+                                    statusEl.style.display = 'block';
+                                    break;
+                            }
+                        };
+
+                        // Set remote description (offer)
+                        await pc.setRemoteDescription(new RTCSessionDescription({
+                            type: data.type,
+                            sdp: data.sdp
+                        }));
+
+                        // Create and send answer
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+
+                        ws.send(JSON.stringify({
+                            type: 'answer',
+                            sdp: answer.sdp
+                        }));
+
+                        webrtcConnections[id] = { pc, ws };
+
+                    } else if (data.type === 'ice-candidate' && pc) {
+                        try {
+                            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        } catch (e) {
+                            console.error('Error adding ICE candidate:', e);
+                        }
+                    } else if (data.type === 'error') {
+                        console.error('WebRTC error:', data.message);
+                        statusEl.className = 'webrtc-status failed';
+                        statusEl.textContent = data.message;
+                        showToast(data.message, true);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    statusEl.className = 'webrtc-status failed';
+                    statusEl.textContent = 'Connection error';
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                    if (webrtcConnections[id]) {
+                        // Clean up if not already stopped
+                        if (webrtcConnections[id].pc) {
+                            webrtcConnections[id].pc.close();
+                        }
+                        delete webrtcConnections[id];
+                    }
+                };
+
+            } catch (e) {
+                console.error('WebRTC play error:', e);
+                showToast('WebRTC failed: ' + e.message, true);
+                container.innerHTML = '<div class="video-placeholder">WebRTC failed</div>';
+            }
+        }
+
+        function stopPlayer(id) {
+            // Stop HLS player
+            if (players[id]) {
+                players[id].destroy();
+                delete players[id];
+            }
+            // Stop WebRTC connection
+            if (webrtcConnections[id]) {
+                if (webrtcConnections[id].ws) {
+                    webrtcConnections[id].ws.send(JSON.stringify({ type: 'close' }));
+                    webrtcConnections[id].ws.close();
+                }
+                if (webrtcConnections[id].pc) {
+                    webrtcConnections[id].pc.close();
+                }
+                delete webrtcConnections[id];
+            }
+            // Stop heartbeat
+            if (heartbeatIntervals[id]) {
+                clearInterval(heartbeatIntervals[id]);
+                delete heartbeatIntervals[id];
+            }
+        }
+
+        function startHeartbeat(streamId, token) {
+            if (heartbeatIntervals[streamId]) {
+                clearInterval(heartbeatIntervals[streamId]);
+            }
+            heartbeatIntervals[streamId] = setInterval(async () => {
+                try {
+                    await fetch(`/api/streams/${streamId}/heartbeat`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                } catch (e) {
+                    console.error('Heartbeat failed:', e);
+                }
+            }, 10000);
+        }
+
+        async function deleteStream(id) {
+            if (!confirm('Delete this stream?')) return;
+            try {
+                stopPlayer(id);
+                await api('DELETE', `/${id}`);
+                showToast('Stream deleted');
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        // FFmpeg Settings UI Functions
+        function toggleAccordion(header) {
+            header.classList.toggle('open');
+            header.nextElementSibling.classList.toggle('open');
+        }
+
+        function updateCrfValue() {
+            const slider = document.getElementById('ffCrf');
+            document.getElementById('ffCrfValue').textContent = slider.value;
+        }
+
+        function resetFfmpegSettings() {
+            // Reset all FFmpeg UI fields to defaults
+            document.getElementById('ffRtspTransport').value = '';
+            document.getElementById('ffBufferSize').value = '';
+            document.getElementById('ffStimeout').value = '';
+            document.getElementById('ffPreset').value = '';
+            document.getElementById('ffTune').value = '';
+            document.getElementById('ffProfile').value = '';
+            document.getElementById('ffCrf').value = '23';
+            document.getElementById('ffCrfValue').textContent = '23';
+            document.getElementById('ffVideoBitrate').value = '';
+            document.getElementById('ffScale').value = '';
+            document.getElementById('ffAudioMode').value = '';
+            document.getElementById('ffAudioBitrate').value = '';
+            document.getElementById('ffAudioChannels').value = '';
+            document.getElementById('ffHlsTime').value = '';
+            document.getElementById('ffHlsListSize').value = '';
+            document.getElementById('ffmpegOverrides').value = '';
+            // Collapse accordion
+            const header = document.querySelector('.accordion-header');
+            const content = document.querySelector('.accordion-content');
+            if (header) header.classList.remove('open');
+            if (content) content.classList.remove('open');
+        }
+
+        function loadFfmpegSettings(overrides) {
+            if (!overrides) {
+                resetFfmpegSettings();
+                return;
+            }
+
+            // Set UI values from overrides object
+            document.getElementById('ffRtspTransport').value = overrides.rtsp_transport || '';
+            document.getElementById('ffBufferSize').value = overrides.buffer_size || '';
+            document.getElementById('ffStimeout').value = overrides.stimeout || '';
+            document.getElementById('ffPreset').value = overrides.preset || '';
+            document.getElementById('ffTune').value = overrides.tune || '';
+            document.getElementById('ffProfile').value = overrides.profile || '';
+
+            const crf = overrides.crf || '23';
+            document.getElementById('ffCrf').value = crf;
+            document.getElementById('ffCrfValue').textContent = crf;
+
+            document.getElementById('ffVideoBitrate').value = overrides.video_bitrate || '';
+            document.getElementById('ffScale').value = overrides.scale || '';
+
+            // Audio mode
+            if (overrides.no_audio) {
+                document.getElementById('ffAudioMode').value = 'disable';
+            } else if (overrides.transcode_audio) {
+                document.getElementById('ffAudioMode').value = 'transcode';
+            } else {
+                document.getElementById('ffAudioMode').value = '';
+            }
+
+            document.getElementById('ffAudioBitrate').value = overrides.audio_bitrate || '';
+            document.getElementById('ffAudioChannels').value = overrides.audio_channels || '';
+            document.getElementById('ffHlsTime').value = overrides.hls_time || '';
+            document.getElementById('ffHlsListSize').value = overrides.hls_list_size || '';
+
+            // Put remaining/unknown options in raw JSON textarea
+            const knownKeys = ['rtsp_transport', 'buffer_size', 'stimeout', 'preset', 'tune',
+                'profile', 'crf', 'video_bitrate', 'scale', 'no_audio', 'transcode_audio',
+                'audio_bitrate', 'audio_channels', 'hls_time', 'hls_list_size'];
+            const remaining = {};
+            for (const key in overrides) {
+                if (!knownKeys.includes(key)) {
+                    remaining[key] = overrides[key];
+                }
+            }
+            document.getElementById('ffmpegOverrides').value =
+                Object.keys(remaining).length > 0 ? JSON.stringify(remaining, null, 2) : '';
+        }
+
+        function buildFfmpegOverrides() {
+            const overrides = {};
+
+            // Input settings
+            const rtspTransport = document.getElementById('ffRtspTransport').value;
+            if (rtspTransport) overrides.rtsp_transport = rtspTransport;
+
+            const bufferSize = document.getElementById('ffBufferSize').value;
+            if (bufferSize) overrides.buffer_size = bufferSize;
+
+            const stimeout = document.getElementById('ffStimeout').value;
+            if (stimeout) overrides.stimeout = stimeout;
+
+            // Video settings
+            const preset = document.getElementById('ffPreset').value;
+            if (preset) overrides.preset = preset;
+
+            const tune = document.getElementById('ffTune').value;
+            if (tune) overrides.tune = tune;
+
+            const profile = document.getElementById('ffProfile').value;
+            if (profile) overrides.profile = profile;
+
+            const crf = document.getElementById('ffCrf').value;
+            if (crf && crf !== '23') overrides.crf = crf;
+
+            const videoBitrate = document.getElementById('ffVideoBitrate').value;
+            if (videoBitrate) overrides.video_bitrate = videoBitrate;
+
+            const scale = document.getElementById('ffScale').value;
+            if (scale) overrides.scale = scale;
+
+            // Audio settings
+            const audioMode = document.getElementById('ffAudioMode').value;
+            if (audioMode === 'disable') {
+                overrides.no_audio = true;
+            } else if (audioMode === 'transcode') {
+                overrides.transcode_audio = true;
+            }
+
+            const audioBitrate = document.getElementById('ffAudioBitrate').value;
+            if (audioBitrate) overrides.audio_bitrate = audioBitrate;
+
+            const audioChannels = document.getElementById('ffAudioChannels').value;
+            if (audioChannels) overrides.audio_channels = audioChannels;
+
+            // HLS settings
+            const hlsTime = document.getElementById('ffHlsTime').value;
+            if (hlsTime) overrides.hls_time = parseInt(hlsTime);
+
+            const hlsListSize = document.getElementById('ffHlsListSize').value;
+            if (hlsListSize) overrides.hls_list_size = parseInt(hlsListSize);
+
+            // Merge with raw JSON overrides
+            const rawJson = document.getElementById('ffmpegOverrides').value.trim();
+            if (rawJson) {
+                try {
+                    const parsed = JSON.parse(rawJson);
+                    Object.assign(overrides, parsed);
+                } catch (e) {
+                    // Invalid JSON, ignore
+                }
+            }
+
+            return Object.keys(overrides).length > 0 ? overrides : null;
+        }
+
+        function applyPreset(presetName) {
+            resetFfmpegSettings();
+
+            switch (presetName) {
+                case 'lowLatency':
+                    document.getElementById('ffBufferSize').value = '524288';
+                    document.getElementById('ffPreset').value = 'ultrafast';
+                    document.getElementById('ffTune').value = 'zerolatency';
+                    document.getElementById('ffHlsTime').value = '1';
+                    document.getElementById('ffHlsListSize').value = '4';
+                    document.getElementById('latencyMode').value = 'low';
+                    break;
+
+                case 'highQuality':
+                    document.getElementById('ffPreset').value = 'fast';
+                    document.getElementById('ffProfile').value = 'high';
+                    document.getElementById('ffCrf').value = '20';
+                    document.getElementById('ffCrfValue').textContent = '20';
+                    document.getElementById('ffAudioBitrate').value = '192k';
+                    document.getElementById('useTranscode').checked = true;
+                    break;
+
+                case 'lowBandwidth':
+                    document.getElementById('ffPreset').value = 'veryfast';
+                    document.getElementById('ffCrf').value = '28';
+                    document.getElementById('ffCrfValue').textContent = '28';
+                    document.getElementById('ffVideoBitrate').value = '1M';
+                    document.getElementById('ffScale').value = '1280:720';
+                    document.getElementById('ffAudioBitrate').value = '96k';
+                    document.getElementById('useTranscode').checked = true;
+                    break;
+
+                case 'compatibility':
+                    document.getElementById('ffPreset').value = 'ultrafast';
+                    document.getElementById('ffProfile').value = 'baseline';
+                    document.getElementById('ffAudioMode').value = 'transcode';
+                    document.getElementById('useTranscode').checked = true;
+                    break;
+
+                case 'default':
+                default:
+                    // Already reset
+                    break;
+            }
+
+            showToast(`Applied ${presetName} preset`);
+        }
+
+        // Modal functions
+        function openAddModal() {
+            document.getElementById('modalTitle').textContent = 'Add Stream';
+            document.getElementById('streamId').value = '';
+            document.getElementById('streamName').value = '';
+            document.getElementById('streamUrl').value = '';
+            document.getElementById('streamMode').value = 'on_demand';
+            document.getElementById('keepAlive').value = '60';
+            document.getElementById('latencyMode').value = 'stable';
+            document.getElementById('useTranscode').checked = false;
+            document.getElementById('analyzeResults').innerHTML = '';
+            resetFfmpegSettings();
+            document.getElementById('streamModal').classList.add('active');
+        }
+
+        function editStream(id) {
+            const stream = streams.find(s => s.id === id);
+            if (!stream) return;
+
+            document.getElementById('modalTitle').textContent = 'Edit Stream';
+            document.getElementById('streamId').value = stream.id;
+            document.getElementById('streamName').value = stream.name;
+            document.getElementById('streamUrl').value = stream.rtsp_url;
+            document.getElementById('streamMode').value = stream.mode;
+            document.getElementById('keepAlive').value = stream.keep_alive_seconds;
+            document.getElementById('latencyMode').value = stream.latency_mode || 'stable';
+            document.getElementById('useTranscode').checked = stream.use_transcode;
+            document.getElementById('analyzeResults').innerHTML = '';
+            loadFfmpegSettings(stream.ffmpeg_overrides);
+            document.getElementById('streamModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('streamModal').classList.remove('active');
+        }
+
+        async function saveStream() {
+            const id = document.getElementById('streamId').value;
+            const data = {
+                name: document.getElementById('streamName').value,
+                rtsp_url: document.getElementById('streamUrl').value,
+                mode: document.getElementById('streamMode').value,
+                keep_alive_seconds: parseInt(document.getElementById('keepAlive').value),
+                latency_mode: document.getElementById('latencyMode').value,
+                use_transcode: document.getElementById('useTranscode').checked
+            };
+
+            // Build FFmpeg overrides from UI
+            const overrides = buildFfmpegOverrides();
+            if (overrides) {
+                data.ffmpeg_overrides = overrides;
+            }
+
+            try {
+                if (id) {
+                    await api('PUT', `/${id}`, data);
+                    showToast('Stream updated');
+                } else {
+                    await api('POST', '', data);
+                    showToast('Stream created');
+                }
+                closeModal();
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function analyzeStream() {
+            const url = document.getElementById('streamUrl').value;
+            if (!url) {
+                showToast('Enter RTSP URL first', true);
+                return;
+            }
+
+            const id = document.getElementById('streamId').value;
+            const btn = document.getElementById('analyzeBtn');
+            const results = document.getElementById('analyzeResults');
+
+            btn.disabled = true;
+            btn.textContent = 'Analyzing...';
+            results.innerHTML = '<div class="loader" style="margin: 20px auto;"></div>';
+
+            try {
+                let analysis;
+                if (id) {
+                    analysis = await api('POST', `/${id}/analyze`);
+                } else {
+                    // Create temporary stream for analysis
+                    const temp = await api('POST', '', {
+                        name: 'Temp',
+                        rtsp_url: url,
+                        mode: 'on_demand'
+                    });
+                    analysis = await api('POST', `/${temp.id}/analyze`);
+                    await api('DELETE', `/${temp.id}`);
+                }
+
+                if (analysis.is_valid) {
+                    results.innerHTML = `
+                        <div class="analyze-results">
+                            <h4>Stream Analysis</h4>
+                            <div class="item"><span>Video Codec</span><span>${analysis.video_codec || 'N/A'} ${analysis.can_copy_video ? '(copy OK)' : '(needs transcode)'}</span></div>
+                            <div class="item"><span>Resolution</span><span>${analysis.resolution || 'N/A'}</span></div>
+                            <div class="item"><span>Framerate</span><span>${analysis.framerate || 'N/A'} fps</span></div>
+                            <div class="item"><span>Audio Codec</span><span>${analysis.audio_codec || 'None'} ${analysis.can_copy_audio ? '(copy OK)' : '(needs transcode)'}</span></div>
+                            ${analysis.transcode_reason ? `<div class="item" style="color: #f39c12;"><span>Note</span><span>${analysis.transcode_reason}</span></div>` : ''}
+                        </div>
+                    `;
+
+                    // Auto-set transcode if needed
+                    if (analysis.needs_transcode) {
+                        document.getElementById('useTranscode').checked = true;
+                    }
+                } else {
+                    results.innerHTML = `<div class="error-box">${analysis.error || 'Analysis failed'}</div>`;
+                }
+            } catch (e) {
+                results.innerHTML = `<div class="error-box">${e.message}</div>`;
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Analyze Stream';
+        }
+
+        // Share modal
+        async function shareStream(id) {
+            currentShareStreamId = id;
+            try {
+                const expiry = document.getElementById('tokenExpiry').value;
+                const tokenData = await api('GET', `/${id}/token?expires_hours=${expiry}`);
+
+                // Build URLs using current browser location (so external players can reach the server)
+                // This ensures the URL uses the same host/IP the user is currently using
+                const baseUrl = window.location.origin;
+                const hlsUrl = `${baseUrl}/hls/${id}/stream.m3u8?token=${tokenData.token}`;
+                const playerUrl = `${baseUrl}/?stream=${id}&token=${tokenData.token}`;
+
+                document.getElementById('shareHlsUrl').value = hlsUrl;
+                document.getElementById('sharePlayerUrl').value = playerUrl;
+                document.getElementById('shareModal').classList.add('active');
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.remove('active');
+            currentShareStreamId = null;
+        }
+
+        async function regenerateToken() {
+            if (currentShareStreamId) {
+                await shareStream(currentShareStreamId);
+            }
+        }
+
+        // Utilities
+        function copyToClipboard(elementId) {
+            const el = document.getElementById(elementId);
+            el.select();
+            document.execCommand('copy');
+            showToast('Copied to clipboard');
+        }
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast active' + (isError ? ' error' : '');
+            setTimeout(() => toast.classList.remove('active'), 3000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Batch Selection Functions
+        function toggleStreamSelection(streamId, checked) {
+            console.log('toggleStreamSelection called:', streamId, checked);
+            if (checked) {
+                selectedStreams.add(streamId);
+            } else {
+                selectedStreams.delete(streamId);
+            }
+            console.log('selectedStreams:', Array.from(selectedStreams));
+            updateBatchControls();
+            // Update card visual
+            const card = document.querySelector(`.card[data-stream-id="${streamId}"]`);
+            if (card) {
+                card.classList.toggle('selected', checked);
+            }
+        }
+
+        function updateBatchControls() {
+            const batchControls = document.getElementById('batchControls');
+            const count = selectedStreams.size;
+            document.getElementById('selectedCount').textContent = count;
+            batchControls.classList.toggle('hidden', count === 0);
+        }
+
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const checkboxes = document.querySelectorAll('.select-checkbox');
+            if (selectAllCheckbox.checked) {
+                streams.forEach(s => selectedStreams.add(s.id));
+            } else {
+                streams.forEach(s => selectedStreams.delete(s.id));
+            }
+            checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+            document.querySelectorAll('.card').forEach(card => {
+                card.classList.toggle('selected', selectAllCheckbox.checked);
+            });
+            updateBatchControls();
+        }
+
+        function clearSelection() {
+            selectedStreams.clear();
+            document.getElementById('selectAll').checked = false;
+            document.querySelectorAll('.select-checkbox').forEach(cb => cb.checked = false);
+            document.querySelectorAll('.card').forEach(card => card.classList.remove('selected'));
+            updateBatchControls();
+        }
+
+        async function batchStart() {
+            if (selectedStreams.size === 0) return;
+            try {
+                const result = await api('POST', '/batch/start', { stream_ids: Array.from(selectedStreams) });
+                showToast(result.message);
+                clearSelection();
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function batchStop() {
+            if (selectedStreams.size === 0) return;
+            try {
+                const result = await api('POST', '/batch/stop', { stream_ids: Array.from(selectedStreams) });
+                showToast(result.message);
+                clearSelection();
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function batchRestart() {
+            if (selectedStreams.size === 0) return;
+            try {
+                const result = await api('POST', '/batch/restart', { stream_ids: Array.from(selectedStreams) });
+                showToast(result.message);
+                clearSelection();
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function batchDelete() {
+            console.log('batchDelete called, selectedStreams:', Array.from(selectedStreams));
+            if (selectedStreams.size === 0) {
+                console.log('No streams selected');
+                return;
+            }
+            if (!confirm(`Delete ${selectedStreams.size} stream(s)? This cannot be undone.`)) {
+                console.log('User cancelled delete');
+                return;
+            }
+            try {
+                console.log('Sending delete request for:', Array.from(selectedStreams));
+                const result = await api('DELETE', '/batch', { stream_ids: Array.from(selectedStreams) });
+                console.log('Delete result:', result);
+                showToast(result.message);
+                clearSelection();
+                loadStreams();
+            } catch (e) {
+                console.error('Delete error:', e);
+                showToast(e.message, true);
+            }
+        }
+
+        async function batchAutoName() {
+            if (selectedStreams.size === 0) return;
+
+            const btn = document.getElementById('batchAutoNameBtn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Analyzing...';
+
+            // Get selected streams with their RTSP URLs
+            const camerasToAnalyze = [];
+            for (const streamId of selectedStreams) {
+                const stream = streams.find(s => s.id === streamId);
+                if (stream && stream.rtsp_url) {
+                    camerasToAnalyze.push({
+                        channel_id: streamId,
+                        name: stream.name,
+                        rtsp_url_main: stream.rtsp_url
+                    });
+                }
+            }
+
+            if (camerasToAnalyze.length === 0) {
+                showToast('No streams with RTSP URLs found', true);
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
+            try {
+                showToast(`Analyzing ${camerasToAnalyze.length} stream(s)...`);
+
+                const res = await fetch('/api/nvr/analyze-batch', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cameras: camerasToAnalyze })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Analysis failed' }));
+                    throw new Error(err.detail);
+                }
+
+                const data = await res.json();
+
+                // Update each stream's name via API
+                let updated = 0;
+                for (const result of data.results) {
+                    if (result.suggested_name && !result.error && result.suggested_name !== result.original_name) {
+                        try {
+                            // Get the stream to get all current values
+                            const stream = streams.find(s => s.id === result.channel_id);
+                            if (stream) {
+                                await api('PATCH', `/${result.channel_id}`, {
+                                    name: result.suggested_name,
+                                    rtsp_url: stream.rtsp_url,
+                                    mode: stream.mode,
+                                    keep_alive_seconds: stream.keep_alive_seconds,
+                                    latency_mode: stream.latency_mode,
+                                    use_transcode: stream.use_transcode
+                                });
+                                updated++;
+                            }
+                        } catch (e) {
+                            console.error(`Failed to update stream ${result.channel_id}:`, e);
+                        }
+                    }
+                }
+
+                showToast(`Updated ${updated} of ${data.total} stream names (${data.failed} failed analysis)`);
+                clearSelection();
+                loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // NVR Discovery Functions
+        let discoveredCameras = [];
+
+        function openNvrModal() {
+            document.getElementById('nvrModal').classList.add('active');
+            document.getElementById('nvrForm').style.display = 'block';
+            document.getElementById('nvrResults').style.display = 'none';
+            document.getElementById('backToFormBtn').style.display = 'none';
+            document.getElementById('importBtn').style.display = 'none';
+            document.getElementById('importResults').style.display = 'none';
+        }
+
+        function closeNvrModal() {
+            document.getElementById('nvrModal').classList.remove('active');
+            discoveredCameras = [];
+        }
+
+        function backToNvrForm() {
+            document.getElementById('nvrForm').style.display = 'block';
+            document.getElementById('nvrResults').style.display = 'none';
+            document.getElementById('backToFormBtn').style.display = 'none';
+            document.getElementById('importBtn').style.display = 'none';
+            document.getElementById('importResults').style.display = 'none';
+        }
+
+        async function discoverNvr() {
+            const host = document.getElementById('nvrHost').value.trim();
+            const port = parseInt(document.getElementById('nvrPort').value) || 80;
+            const rtspPort = parseInt(document.getElementById('nvrRtspPort').value) || 554;
+            const username = document.getElementById('nvrUsername').value;
+            const password = document.getElementById('nvrPassword').value;
+            const brand = document.getElementById('nvrBrand').value;
+
+            if (!host) {
+                showToast('Enter NVR address', true);
+                return;
+            }
+            if (!username || !password) {
+                showToast('Enter username and password', true);
+                return;
+            }
+
+            const btn = document.getElementById('discoverBtn');
+            btn.disabled = true;
+            btn.textContent = 'Discovering...';
+
+            try {
+                const res = await fetch('/api/nvr/discover', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ host, port, rtsp_port: rtspPort, username, password, brand })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Discovery failed' }));
+                    throw new Error(err.detail || 'Discovery failed');
+                }
+
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error, true);
+                    btn.disabled = false;
+                    btn.textContent = 'Discover Cameras';
+                    return;
+                }
+
+                discoveredCameras = data.cameras;
+                renderDiscoveryResults(data);
+
+            } catch (e) {
+                showToast(e.message, true);
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Discover Cameras';
+        }
+
+        function renderDiscoveryResults(data) {
+            // Show NVR info
+            document.getElementById('nvrInfo').innerHTML = `
+                <h4>NVR Information</h4>
+                <div class="nvr-info-grid">
+                    <div class="nvr-info-item">
+                        <span class="label">Brand:</span> ${data.brand}
+                    </div>
+                    <div class="nvr-info-item">
+                        <span class="label">Model:</span> ${data.model || 'Unknown'}
+                    </div>
+                    <div class="nvr-info-item">
+                        <span class="label">Channels:</span> ${data.channels}
+                    </div>
+                </div>
+            `;
+
+            // Show cameras
+            const container = document.getElementById('discoveredCameras');
+            if (data.cameras.length === 0) {
+                container.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">No cameras found</div>';
+            } else {
+                container.innerHTML = data.cameras.map((cam, idx) => `
+                    <div class="camera-item">
+                        <input type="checkbox" id="cam-${idx}" data-index="${idx}" onchange="updateSelectedCount()" checked>
+                        <div class="camera-info">
+                            <div class="camera-name">${escapeHtml(cam.name)}</div>
+                            <div class="camera-url">${escapeHtml(cam.rtsp_url_main)}</div>
+                        </div>
+                        <span class="camera-status ${cam.status}">${cam.status}</span>
+                    </div>
+                `).join('');
+            }
+
+            // Update UI state
+            document.getElementById('nvrForm').style.display = 'none';
+            document.getElementById('nvrResults').style.display = 'block';
+            document.getElementById('backToFormBtn').style.display = 'inline-block';
+            document.getElementById('importBtn').style.display = 'inline-block';
+            updateSelectedCount();
+        }
+
+        function selectAllCameras() {
+            document.querySelectorAll('#discoveredCameras input[type="checkbox"]').forEach(cb => cb.checked = true);
+            updateSelectedCount();
+        }
+
+        function selectNoneCameras() {
+            document.querySelectorAll('#discoveredCameras input[type="checkbox"]').forEach(cb => cb.checked = false);
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            const checked = document.querySelectorAll('#discoveredCameras input[type="checkbox"]:checked').length;
+            document.getElementById('selectedCount').textContent = `${checked} selected`;
+            document.getElementById('importBtn').disabled = checked === 0;
+        }
+
+        async function importSelectedCameras() {
+            const selectedIndices = [];
+            document.querySelectorAll('#discoveredCameras input[type="checkbox"]:checked').forEach(cb => {
+                selectedIndices.push(parseInt(cb.dataset.index));
+            });
+
+            if (selectedIndices.length === 0) {
+                showToast('Select at least one camera', true);
+                return;
+            }
+
+            const cameras = selectedIndices.map(idx => discoveredCameras[idx]);
+            const mode = document.getElementById('importMode').value;
+            const latencyMode = document.getElementById('importLatency').value;
+            const useSubStream = document.getElementById('importQuality').value === 'sub';
+
+            const btn = document.getElementById('importBtn');
+            btn.disabled = true;
+            btn.textContent = 'Importing...';
+
+            try {
+                const res = await fetch('/api/nvr/import', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        cameras: cameras,
+                        mode: mode,
+                        latency_mode: latencyMode,
+                        use_sub_stream: useSubStream
+                    })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Import failed' }));
+                    throw new Error(err.detail || 'Import failed');
+                }
+
+                const data = await res.json();
+                showImportResults(data);
+                showToast(`Imported ${data.imported} of ${data.total} cameras`);
+
+                // Refresh streams list
+                loadStreams();
+
+            } catch (e) {
+                showToast(e.message, true);
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Import Selected';
+        }
+
+        function showImportResults(data) {
+            const container = document.getElementById('importResults');
+            container.style.display = 'block';
+            container.innerHTML = `
+                <h4 style="margin-bottom: 10px;">Import Results: ${data.imported}/${data.total} successful</h4>
+                ${data.results.map(r => `
+                    <div class="import-result-item ${r.success ? 'success' : 'failed'}">
+                        <span>${escapeHtml(r.name)}</span>
+                        <span>${r.success ? 'Imported' : r.error}</span>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        // Settings Modal Functions
+        async function openSettingsModal() {
+            document.getElementById('settingsModal').classList.add('active');
+            document.getElementById('claudeApiKey').value = '';
+
+            // Check if API key is configured
+            try {
+                const res = await fetch('/api/settings/claude-api', { credentials: 'include' });
+                const data = await res.json();
+
+                const statusEl = document.getElementById('claudeApiStatus');
+                const removeBtn = document.getElementById('removeApiKeyBtn');
+
+                if (data.configured) {
+                    statusEl.innerHTML = `<span style="color: #28a745;">Configured: ${data.key_preview}</span>`;
+                    removeBtn.style.display = 'inline-block';
+                } else {
+                    statusEl.innerHTML = '<span style="color: #666;">Not configured</span>';
+                    removeBtn.style.display = 'none';
+                }
+            } catch (e) {
+                console.error('Failed to check API key status:', e);
+            }
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        function toggleApiKeyVisibility() {
+            const input = document.getElementById('claudeApiKey');
+            const btn = event.target;
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = 'Hide';
+            } else {
+                input.type = 'password';
+                btn.textContent = 'Show';
+            }
+        }
+
+        async function saveClaudeApiKey() {
+            const apiKey = document.getElementById('claudeApiKey').value.trim();
+            if (!apiKey) {
+                showToast('Please enter an API key', true);
+                return;
+            }
+
+            if (!apiKey.startsWith('sk-')) {
+                showToast('Invalid API key format. Claude API keys start with "sk-"', true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/settings/claude-api', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Failed to save' }));
+                    throw new Error(err.detail);
+                }
+
+                showToast('Claude API key saved successfully');
+                closeSettingsModal();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function removeClaudeApiKey() {
+            if (!confirm('Are you sure you want to remove the Claude API key?')) return;
+
+            try {
+                await fetch('/api/settings/claude-api', {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+                showToast('Claude API key removed');
+                closeSettingsModal();
+            } catch (e) {
+                showToast('Failed to remove API key', true);
+            }
+        }
+
+        // Auto-name cameras using AI
+        async function autoNameCameras() {
+            const btn = document.getElementById('autoNameBtn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Analyzing...';
+
+            // Get selected cameras or all if none selected
+            let camerasToAnalyze = [];
+            const checkboxes = document.querySelectorAll('#discoveredCameras input[type="checkbox"]:checked');
+
+            if (checkboxes.length > 0) {
+                checkboxes.forEach(cb => {
+                    camerasToAnalyze.push(discoveredCameras[parseInt(cb.dataset.index)]);
+                });
+            } else {
+                camerasToAnalyze = [...discoveredCameras];
+            }
+
+            if (camerasToAnalyze.length === 0) {
+                showToast('No cameras to analyze', true);
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/nvr/analyze-batch', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cameras: camerasToAnalyze })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Analysis failed' }));
+                    throw new Error(err.detail);
+                }
+
+                const data = await res.json();
+
+                // Update camera names in the UI
+                data.results.forEach(result => {
+                    const idx = discoveredCameras.findIndex(c => c.channel_id === result.channel_id);
+                    if (idx >= 0 && result.suggested_name && !result.error) {
+                        // Update the discovered cameras array
+                        discoveredCameras[idx].name = result.suggested_name;
+
+                        // Update the input field in the UI
+                        const nameInput = document.querySelector(`#discoveredCameras input[data-index="${idx}"][type="text"]`);
+                        if (nameInput) {
+                            nameInput.value = result.suggested_name;
+                            // Add visual feedback
+                            nameInput.style.backgroundColor = '#e8f5e9';
+                            setTimeout(() => { nameInput.style.backgroundColor = ''; }, 2000);
+                        }
+                    }
+                });
+
+                showToast(`Analyzed ${data.success} cameras (${data.failed} failed)`);
+
+            } catch (e) {
+                showToast(e.message, true);
+            }
+
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+
+        // Check URL params for direct playback
+        function checkUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            const streamId = params.get('stream');
+            const token = params.get('token');
+
+            if (streamId && token) {
+                // Direct playback mode
+                document.querySelector('.container').innerHTML = `
+                    <div style="max-width: 1200px; margin: 0 auto;">
+                        <video id="direct-player" controls autoplay style="width: 100%; aspect-ratio: 16/9; background: #000;"></video>
+                    </div>
+                `;
+
+                const video = document.getElementById('direct-player');
+                const hlsUrl = `/hls/${streamId}/stream.m3u8?token=${token}`;
+
+                if (Hls.isSupported()) {
+                    const hls = new Hls({
+                        enableWorker: true,
+                        lowLatencyMode: true,
+                        liveSyncDurationCount: 1,
+                        liveMaxLatencyDurationCount: 3,
+                        liveDurationInfinity: true,
+                        maxBufferLength: 2,
+                        maxMaxBufferLength: 4,
+                        backBufferLength: 5,
+                    });
+                    hls.loadSource(hlsUrl);
+                    hls.attachMedia(video);
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = hlsUrl;
+                }
+
+                // Heartbeat
+                setInterval(() => {
+                    fetch(`/api/streams/${streamId}/heartbeat`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    }).catch(() => {});
+                }, 10000);
+
+                return true;
+            }
+            return false;
+        }
+
+        // Initialize main app
+        function init() {
+            if (!checkUrlParams()) {
+                loadStreams();
+                // Refresh every 60 seconds, but only if no active players
+                setInterval(() => {
+                    const hasActivePlayers = Object.keys(players).length > 0 || Object.keys(webrtcConnections).length > 0;
+                    if (!hasActivePlayers) {
+                        loadStreams();
+                    } else {
+                        // Just update status without rebuilding UI
+                        updateStreamStatuses();
+                    }
+                }, 60000);
+            }
+        }
+
+        // Start: check auth first
+        checkAuth().then(authenticated => {
+            if (authenticated) init();
+        });
+
+        // Lightweight status update without rebuilding video containers
+        async function updateStreamStatuses() {
+            try {
+                const response = await api('GET', '');
+                const newStreams = response.streams || [];
+                newStreams.forEach(s => {
+                    // Update status badge
+                    const card = document.querySelector(`[data-stream-id="${s.id}"]`);
+                    if (card) {
+                        const statusEl = card.querySelector('.status');
+                        if (statusEl) {
+                            statusEl.className = `status ${s.status}`;
+                            statusEl.textContent = s.status;
+                        }
+                        // Update error box
+                        const errorBox = card.querySelector('.error-box');
+                        if (s.last_error && !errorBox) {
+                            const cardBody = card.querySelector('.card-body');
+                            cardBody.insertAdjacentHTML('afterbegin', `<div class="error-box">${s.last_error}</div>`);
+                        } else if (!s.last_error && errorBox) {
+                            errorBox.remove();
+                        }
+                    }
+                });
+                streams = newStreams;
+            } catch (e) {
+                console.error('Status update failed:', e);
+            }
+        }
+    </script>
+</body>
+</html>
