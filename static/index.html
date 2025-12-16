@@ -55,6 +55,7 @@
         button:disabled { background: #555; cursor: not-allowed; }
         button.secondary { background: #444; color: #eee; }
         button.secondary:hover { background: #555; }
+        button.small { padding: 6px 12px; font-size: 12px; }
         button.danger { background: #e74c3c; color: #fff; }
         button.danger:hover { background: #c0392b; }
         .grid {
@@ -759,6 +760,10 @@
                     <option value="always_on">Always On</option>
                     <option value="smart">Smart</option>
                 </select>
+                <select id="groupFilter" onchange="loadStreams()">
+                    <option value="">All Groups</option>
+                </select>
+                <button class="secondary small" onclick="refreshAllThumbnails()" title="Capture thumbnails for all streams">Refresh Thumbs</button>
             </div>
             <div class="stats-bar" id="statsBar">
                 <div class="stat">Total: <span class="stat-count" id="totalCount">0</span></div>
@@ -1202,12 +1207,44 @@
 
     <!-- Settings Modal -->
     <div id="settingsModal" class="modal">
-        <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-content" style="max-width: 600px;">
             <div class="modal-header">
                 <h3>Settings</h3>
                 <button class="secondary" onclick="closeSettingsModal()">&times;</button>
             </div>
             <div class="modal-body">
+                <!-- Server Settings -->
+                <h4 style="margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px;">Server Settings</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Max Concurrent Streams</label>
+                        <input type="number" id="settingMaxConcurrent" min="1" max="100" value="30">
+                        <span class="help-text">FIFO: oldest stops when exceeded</span>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Keep Alive (seconds)</label>
+                        <input type="number" id="settingKeepAlive" min="10" max="3600" value="60">
+                        <span class="help-text">Keep stream after viewer leaves</span>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Segment Max Age (minutes)</label>
+                        <input type="number" id="settingSegmentAge" min="1" max="60" value="5">
+                        <span class="help-text">Auto-delete old .ts files</span>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>HLS Segment Duration (sec)</label>
+                        <input type="number" id="settingHlsTime" min="1" max="10" value="2">
+                        <span class="help-text">Lower = less latency</span>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>HLS Playlist Size</label>
+                        <input type="number" id="settingHlsListSize" min="3" max="20" value="5">
+                        <span class="help-text">Segments in playlist</span>
+                    </div>
+                </div>
+
+                <!-- Claude API Key -->
+                <h4 style="margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px;">AI Settings</h4>
                 <div class="form-group">
                     <label>Claude API Key</label>
                     <p style="font-size: 12px; color: #666; margin-bottom: 8px;">
@@ -1224,7 +1261,7 @@
             <div class="modal-footer">
                 <button class="secondary" onclick="closeSettingsModal()">Cancel</button>
                 <button class="danger" onclick="removeClaudeApiKey()" id="removeApiKeyBtn" style="display: none;">Remove Key</button>
-                <button onclick="saveClaudeApiKey()">Save</button>
+                <button onclick="saveAllSettings()">Save All</button>
             </div>
         </div>
     </div>
@@ -1495,11 +1532,13 @@
                 const search = document.getElementById('searchInput').value;
                 const status = document.getElementById('statusFilter').value;
                 const mode = document.getElementById('modeFilter').value;
+                const group = document.getElementById('groupFilter').value;
 
                 let url = `?page=${currentPage}&per_page=${perPage}`;
                 if (search) url += `&search=${encodeURIComponent(search)}`;
                 if (status) url += `&status=${status}`;
                 if (mode) url += `&mode=${mode}`;
+                if (group) url += `&group=${encodeURIComponent(group)}`;
 
                 const data = await api('GET', url);
                 streams = data.streams;
@@ -1514,6 +1553,34 @@
 
                 renderStreams();
                 updatePagination();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function loadGroups() {
+            try {
+                const data = await api('GET', '/groups/list');
+                const select = document.getElementById('groupFilter');
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">All Groups</option>';
+                (data.groups || []).forEach(g => {
+                    const opt = document.createElement('option');
+                    opt.value = g;
+                    opt.textContent = g;
+                    select.appendChild(opt);
+                });
+                select.value = currentValue;
+            } catch (e) {
+                console.error('Failed to load groups:', e);
+            }
+        }
+
+        async function refreshAllThumbnails() {
+            try {
+                showToast('Refreshing thumbnails in background...');
+                await api('POST', '/batch/refresh-thumbnails');
+                showToast('Thumbnail refresh started. Reload page in a few seconds to see updates.');
             } catch (e) {
                 showToast(e.message, true);
             }
@@ -1568,12 +1635,14 @@
             grid.innerHTML = streams.map(s => {
                 const mode = playbackModes[s.id] || 'hls';
                 const isSelected = selectedStreams.has(s.id);
+                const thumbnailStyle = s.thumbnail ? `background-image: url('${s.thumbnail}'); background-size: cover; background-position: center;` : '';
                 return `
                 <div class="card ${isSelected ? 'selected' : ''}" data-stream-id="${s.id}">
                     <input type="checkbox" class="select-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleStreamSelection('${s.id}', this.checked)">
                     <div class="card-header">
                         <span class="card-title">${escapeHtml(s.name)}</span>
                         <div style="display: flex; align-items: center; gap: 10px;">
+                            ${s.group_name ? `<span style="font-size: 11px; background: #4a5568; color: #fff; padding: 2px 8px; border-radius: 4px;">${escapeHtml(s.group_name)}</span>` : ''}
                             ${webrtcAvailable ? `
                             <div class="playback-toggle">
                                 <button class="${mode === 'hls' ? 'active' : ''}" onclick="setPlaybackMode('${s.id}', 'hls')">HLS</button>
@@ -1584,8 +1653,8 @@
                         </div>
                     </div>
                     <div class="video-container" id="video-${s.id}">
-                        <div class="video-placeholder">
-                            ${s.is_running ? '<div class="loader"></div>' : 'Click Play to start'}
+                        <div class="video-placeholder" style="${thumbnailStyle}">
+                            ${s.is_running ? '<div class="loader"></div>' : (s.thumbnail ? '' : 'Click Play to start')}
                         </div>
                     </div>
                     <div class="card-body">
@@ -1614,6 +1683,7 @@
                                  <button class="secondary" onclick="stopStream('${s.id}')">Stop</button>` :
                                 `<button onclick="startStream('${s.id}')">Start</button>`
                             }
+                            <button class="secondary" onclick="captureSnapshot('${s.id}')" title="Capture snapshot">Snap</button>
                             <button class="secondary" onclick="shareStream('${s.id}')">Share</button>
                             <button class="secondary" onclick="editStream('${s.id}')">Edit</button>
                             <button class="danger" onclick="deleteStream('${s.id}')">Delete</button>
@@ -2002,6 +2072,17 @@
                 await api('DELETE', `/${id}`);
                 showToast('Stream deleted');
                 loadStreams();
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function captureSnapshot(id) {
+            try {
+                showToast('Capturing snapshot...');
+                await api('POST', `/${id}/snapshot`);
+                showToast('Snapshot captured');
+                loadStreams();  // Refresh to show new thumbnail
             } catch (e) {
                 showToast(e.message, true);
             }
@@ -2784,23 +2865,36 @@
             document.getElementById('settingsModal').classList.add('active');
             document.getElementById('claudeApiKey').value = '';
 
-            // Check if API key is configured
+            // Load all settings
             try {
-                const res = await fetch('/api/settings/claude-api', { credentials: 'include' });
+                const res = await fetch('/api/settings', { credentials: 'include' });
                 const data = await res.json();
 
+                // Load server settings
+                if (data.server) {
+                    document.getElementById('settingMaxConcurrent').value = data.server.max_concurrent_streams;
+                    document.getElementById('settingKeepAlive').value = data.server.keep_alive_seconds;
+                    document.getElementById('settingSegmentAge').value = data.server.segment_max_age_minutes;
+                    document.getElementById('settingHlsTime').value = data.server.hls_time;
+                    document.getElementById('settingHlsListSize').value = data.server.hls_list_size;
+                }
+
+                // Check Claude API key status
                 const statusEl = document.getElementById('claudeApiStatus');
                 const removeBtn = document.getElementById('removeApiKeyBtn');
 
-                if (data.configured) {
-                    statusEl.innerHTML = `<span style="color: #28a745;">Configured: ${data.key_preview}</span>`;
+                if (data.claude_api_configured) {
+                    // Get key preview
+                    const apiRes = await fetch('/api/settings/claude-api', { credentials: 'include' });
+                    const apiData = await apiRes.json();
+                    statusEl.innerHTML = `<span style="color: #28a745;">Configured: ${apiData.key_preview}</span>`;
                     removeBtn.style.display = 'inline-block';
                 } else {
                     statusEl.innerHTML = '<span style="color: #666;">Not configured</span>';
                     removeBtn.style.display = 'none';
                 }
             } catch (e) {
-                console.error('Failed to check API key status:', e);
+                console.error('Failed to load settings:', e);
             }
         }
 
@@ -2820,32 +2914,51 @@
             }
         }
 
-        async function saveClaudeApiKey() {
-            const apiKey = document.getElementById('claudeApiKey').value.trim();
-            if (!apiKey) {
-                showToast('Please enter an API key', true);
-                return;
-            }
-
-            if (!apiKey.startsWith('sk-')) {
-                showToast('Invalid API key format. Claude API keys start with "sk-"', true);
-                return;
-            }
-
+        async function saveAllSettings() {
             try {
-                const res = await fetch('/api/settings/claude-api', {
-                    method: 'POST',
+                // Save server settings
+                const serverSettings = {
+                    max_concurrent_streams: parseInt(document.getElementById('settingMaxConcurrent').value),
+                    keep_alive_seconds: parseInt(document.getElementById('settingKeepAlive').value),
+                    segment_max_age_minutes: parseInt(document.getElementById('settingSegmentAge').value),
+                    hls_time: parseInt(document.getElementById('settingHlsTime').value),
+                    hls_list_size: parseInt(document.getElementById('settingHlsListSize').value)
+                };
+
+                const serverRes = await fetch('/api/settings/server', {
+                    method: 'PUT',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: apiKey })
+                    body: JSON.stringify(serverSettings)
                 });
 
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({ detail: 'Failed to save' }));
+                if (!serverRes.ok) {
+                    const err = await serverRes.json().catch(() => ({ detail: 'Failed to save server settings' }));
                     throw new Error(err.detail);
                 }
 
-                showToast('Claude API key saved successfully');
+                // Save Claude API key if provided
+                const apiKey = document.getElementById('claudeApiKey').value.trim();
+                if (apiKey) {
+                    if (!apiKey.startsWith('sk-')) {
+                        showToast('Invalid API key format. Claude API keys start with "sk-"', true);
+                        return;
+                    }
+
+                    const apiRes = await fetch('/api/settings/claude-api', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: apiKey })
+                    });
+
+                    if (!apiRes.ok) {
+                        const err = await apiRes.json().catch(() => ({ detail: 'Failed to save API key' }));
+                        throw new Error(err.detail);
+                    }
+                }
+
+                showToast('Settings saved successfully');
                 closeSettingsModal();
             } catch (e) {
                 showToast(e.message, true);
@@ -2985,6 +3098,7 @@
 
         // Initialize main app
         function init() {
+            loadGroups();  // Load group filter options
             if (!checkUrlParams()) {
                 loadStreams();
                 // Refresh every 60 seconds, but only if no active players
@@ -2992,6 +3106,7 @@
                     const hasActivePlayers = Object.keys(players).length > 0 || Object.keys(webrtcConnections).length > 0;
                     if (!hasActivePlayers) {
                         loadStreams();
+                        loadGroups();  // Refresh groups too
                     } else {
                         // Just update status without rebuilding UI
                         updateStreamStatuses();

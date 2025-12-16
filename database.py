@@ -125,6 +125,11 @@ class Stream:
     use_transcode: bool = False
     latency_mode: str = LatencyMode.STABLE.value  # stable (5-10s) or low (2-4s)
 
+    # Organization
+    group_name: Optional[str] = None  # For grouping cameras (e.g., NVR IP)
+    thumbnail: Optional[str] = None  # Base64 encoded thumbnail image
+    thumbnail_updated: Optional[str] = None  # When thumbnail was last updated
+
     # Timestamps
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -229,6 +234,28 @@ class Database:
         except Exception:
             pass  # Column already exists
 
+        # Migration: add group_name column
+        try:
+            await self._connection.execute(
+                "ALTER TABLE streams ADD COLUMN group_name TEXT"
+            )
+        except Exception:
+            pass  # Column already exists
+
+        # Migration: add thumbnail columns
+        try:
+            await self._connection.execute(
+                "ALTER TABLE streams ADD COLUMN thumbnail TEXT"
+            )
+        except Exception:
+            pass
+        try:
+            await self._connection.execute(
+                "ALTER TABLE streams ADD COLUMN thumbnail_updated TEXT"
+            )
+        except Exception:
+            pass
+
         # Create indexes for better performance with 300+ cameras
         await self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_streams_status ON streams(status)"
@@ -238,6 +265,9 @@ class Database:
         )
         await self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_streams_name ON streams(name)"
+        )
+        await self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_streams_group ON streams(group_name)"
         )
 
         # Settings table for app configuration (API keys, etc.)
@@ -489,6 +519,7 @@ class Database:
         search: str = None,
         status: str = None,
         mode: str = None,
+        group: str = None,
         sort_by: str = "id",
         sort_order: str = "asc"
     ) -> tuple[List[Stream], int]:
@@ -498,8 +529,8 @@ class Database:
         params = []
 
         if search:
-            conditions.append("(name LIKE ? OR rtsp_url LIKE ?)")
-            params.extend([f"%{search}%", f"%{search}%"])
+            conditions.append("(name LIKE ? OR rtsp_url LIKE ? OR group_name LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
         if status:
             conditions.append("status = ?")
@@ -508,6 +539,10 @@ class Database:
         if mode:
             conditions.append("mode = ?")
             params.append(mode)
+
+        if group:
+            conditions.append("group_name = ?")
+            params.append(group)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -574,7 +609,8 @@ class Database:
                 framerate = ?, bitrate = ?, ffmpeg_overrides = ?,
                 viewer_count = ?, last_viewer_time = ?, last_error = ?,
                 pid = ?, keep_alive_seconds = ?, use_transcode = ?,
-                latency_mode = ?, updated_at = ?
+                latency_mode = ?, group_name = ?, thumbnail = ?,
+                thumbnail_updated = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -583,11 +619,32 @@ class Database:
                 stream.framerate, stream.bitrate, stream.ffmpeg_overrides,
                 stream.viewer_count, stream.last_viewer_time, stream.last_error,
                 stream.pid, stream.keep_alive_seconds, int(stream.use_transcode),
-                stream.latency_mode, stream.updated_at, stream.id
+                stream.latency_mode, stream.group_name, stream.thumbnail,
+                stream.thumbnail_updated, stream.updated_at, stream.id
             )
         )
         await self._connection.commit()
         return stream
+
+    async def update_stream_thumbnail(self, stream_id: str, thumbnail: str):
+        """Update stream thumbnail."""
+        now = datetime.utcnow().isoformat()
+        await self._connection.execute(
+            """
+            UPDATE streams SET thumbnail = ?, thumbnail_updated = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (thumbnail, now, now, stream_id)
+        )
+        await self._connection.commit()
+
+    async def get_groups(self) -> List[str]:
+        """Get all unique group names."""
+        cursor = await self._connection.execute(
+            "SELECT DISTINCT group_name FROM streams WHERE group_name IS NOT NULL ORDER BY group_name"
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
 
     async def delete_stream(self, stream_id: str) -> bool:
         """Delete stream."""
@@ -665,6 +722,18 @@ class Database:
         cursor = await self._connection.execute("SELECT key, value FROM settings")
         rows = await cursor.fetchall()
         return {row[0]: row[1] for row in rows}
+
+    async def get_runtime_settings(self) -> Dict[str, Any]:
+        """Get runtime settings with defaults from config."""
+        db_settings = await self.get_all_settings()
+
+        return {
+            'max_concurrent_streams': int(db_settings.get('max_concurrent_streams', settings.max_concurrent_streams)),
+            'keep_alive_seconds': int(db_settings.get('keep_alive_seconds', settings.keep_alive_seconds)),
+            'segment_max_age_minutes': int(db_settings.get('segment_max_age_minutes', settings.segment_max_age_minutes)),
+            'hls_time': int(db_settings.get('hls_time', settings.hls_time)),
+            'hls_list_size': int(db_settings.get('hls_list_size', settings.hls_list_size)),
+        }
 
 
 # Global database instance

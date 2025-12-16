@@ -53,6 +53,7 @@ class CameraImportRequest(BaseModel):
     mode: str = Field(default="on_demand", pattern="^(always_on|on_demand|smart)$")
     latency_mode: str = Field(default="stable", pattern="^(low|stable)$")
     use_sub_stream: bool = Field(default=False, description="Use sub-stream instead of main")
+    group_name: Optional[str] = Field(None, description="Group name for all imported cameras (defaults to NVR IP)")
 
 
 class ImportResult(BaseModel):
@@ -205,15 +206,30 @@ async def import_cameras(
             continue
 
         try:
+            # Determine group name - use provided or extract NVR IP from RTSP URL
+            group = data.group_name
+            if not group:
+                # Extract IP from rtsp://user:pass@IP:port/...
+                import re
+                match = re.search(r'@([\d.]+):', rtsp_url)
+                if match:
+                    group = f"NVR {match.group(1)}"
+
             # Create stream
             stream = Stream(
                 name=name,
                 rtsp_url=rtsp_url,
                 mode=data.mode,
                 latency_mode=data.latency_mode,
-                keep_alive_seconds=60
+                keep_alive_seconds=60,
+                group_name=group
             )
             stream = await db.add_stream(stream)
+
+            # Capture thumbnail in background
+            import asyncio
+            from core.stream_manager import stream_manager
+            asyncio.create_task(stream_manager.capture_stream_thumbnail(stream.id))
 
             results.append(ImportResult(
                 channel_id=channel_id,

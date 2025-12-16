@@ -1,7 +1,10 @@
 #!/bin/bash
 #
 # RTSP to HLS Server - Installation Script
-# Similar to Shinobi NVR installation
+#
+# Options:
+#   --venv      Use Python virtual environment (optional)
+#   --no-start  Don't start server after installation
 #
 
 set -e
@@ -16,6 +19,25 @@ NC='\033[0m' # No Color
 # Installation directory
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="rtspserver"
+USE_VENV="no"
+AUTO_START="yes"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --venv)
+            USE_VENV="yes"
+            shift
+            ;;
+        --no-start)
+            AUTO_START="no"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
 echo -e "${BLUE}"
 echo "╔════════════════════════════════════════════════════════════╗"
@@ -25,7 +47,7 @@ echo -e "${NC}"
 
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then
-    echo -e "${YELLOW}Warning: Running as root. Will create dedicated user.${NC}"
+    echo -e "${YELLOW}Warning: Running as root.${NC}"
     RUN_AS_ROOT=true
 else
     RUN_AS_ROOT=false
@@ -60,9 +82,7 @@ install_dependencies() {
                 python3-venv \
                 ffmpeg \
                 curl \
-                git \
-                nodejs \
-                npm
+                git
             ;;
         centos|rhel|fedora)
             sudo dnf install -y \
@@ -70,9 +90,7 @@ install_dependencies() {
                 python3-pip \
                 ffmpeg \
                 curl \
-                git \
-                nodejs \
-                npm
+                git
             ;;
         arch|manjaro)
             sudo pacman -Sy --noconfirm \
@@ -80,55 +98,35 @@ install_dependencies() {
                 python-pip \
                 ffmpeg \
                 curl \
-                git \
-                nodejs \
-                npm
+                git
             ;;
         *)
-            echo -e "${YELLOW}Unknown OS. Please install manually: python3, pip, ffmpeg, nodejs, npm${NC}"
+            echo -e "${YELLOW}Unknown OS. Please install manually: python3, pip, ffmpeg${NC}"
             ;;
     esac
 }
 
-# Install Node.js if not present (for PM2)
-install_nodejs() {
-    if ! command -v node &> /dev/null; then
-        echo -e "${BLUE}Installing Node.js...${NC}"
-        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-        sudo apt-get install -y nodejs
-    else
-        echo -e "${GREEN}Node.js already installed: $(node --version)${NC}"
-    fi
-}
-
-# Install PM2
-install_pm2() {
-    echo -e "${BLUE}Installing PM2...${NC}"
-
-    if ! command -v pm2 &> /dev/null; then
-        sudo npm install -g pm2
-    else
-        echo -e "${GREEN}PM2 already installed: $(pm2 --version)${NC}"
-    fi
-}
-
-# Setup Python virtual environment
+# Setup Python - with or without venv
 setup_python() {
-    echo -e "${BLUE}Setting up Python virtual environment...${NC}"
+    echo -e "${BLUE}Installing Python dependencies...${NC}"
 
     cd "$INSTALL_DIR"
 
-    # Create virtual environment if not exists
-    if [ ! -d "venv" ]; then
+    if [ "$USE_VENV" = "yes" ]; then
+        echo -e "${BLUE}Creating virtual environment...${NC}"
         python3 -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        PYTHON_PATH="$INSTALL_DIR/venv/bin/python"
+    else
+        # Install globally (may need sudo)
+        pip3 install --upgrade pip 2>/dev/null || sudo pip3 install --upgrade pip
+        pip3 install -r requirements.txt 2>/dev/null || sudo pip3 install -r requirements.txt
+        PYTHON_PATH=$(which python3)
     fi
 
-    # Activate and install dependencies
-    source venv/bin/activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-
-    echo -e "${GREEN}Python environment ready${NC}"
+    echo -e "${GREEN}Python dependencies installed${NC}"
 }
 
 # Create data directories
@@ -136,57 +134,17 @@ create_directories() {
     echo -e "${BLUE}Creating data directories...${NC}"
 
     mkdir -p "$INSTALL_DIR/data"
-    mkdir -p "$INSTALL_DIR/data/streams"
     mkdir -p "$INSTALL_DIR/logs"
 
     # Set permissions
-    if [ "$RUN_AS_ROOT" = true ]; then
+    if [ "$RUN_AS_ROOT" = true ] && [ -n "$SUDO_USER" ]; then
         chown -R $SUDO_USER:$SUDO_USER "$INSTALL_DIR"
     fi
 
     echo -e "${GREEN}Directories created${NC}"
 }
 
-# Create PM2 ecosystem file
-create_pm2_config() {
-    echo -e "${BLUE}Creating PM2 configuration...${NC}"
-
-    cat > "$INSTALL_DIR/ecosystem.config.js" << 'EOF'
-module.exports = {
-  apps: [{
-    name: 'rtspserver',
-    cwd: __dirname,
-    script: 'venv/bin/python',
-    args: 'main.py',
-    interpreter: 'none',
-    instances: 1,
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '1G',
-    env: {
-      NODE_ENV: 'production',
-      PYTHONUNBUFFERED: '1'
-    },
-    error_file: 'logs/error.log',
-    out_file: 'logs/output.log',
-    log_file: 'logs/combined.log',
-    time: true,
-    merge_logs: true,
-    // Restart strategy
-    exp_backoff_restart_delay: 100,
-    max_restarts: 10,
-    min_uptime: '10s',
-    // Graceful shutdown
-    kill_timeout: 5000,
-    listen_timeout: 3000
-  }]
-};
-EOF
-
-    echo -e "${GREEN}PM2 configuration created${NC}"
-}
-
-# Create systemd service (alternative to PM2)
+# Create systemd service
 create_systemd_service() {
     echo -e "${BLUE}Creating systemd service...${NC}"
 
@@ -195,6 +153,13 @@ create_systemd_service() {
         SERVICE_USER=${SUDO_USER:-root}
     else
         SERVICE_USER=$(whoami)
+    fi
+
+    # Determine python path
+    if [ "$USE_VENV" = "yes" ]; then
+        EXEC_START="$INSTALL_DIR/venv/bin/python $INSTALL_DIR/main.py"
+    else
+        EXEC_START="$(which python3) $INSTALL_DIR/main.py"
     fi
 
     sudo tee /etc/systemd/system/rtspserver.service > /dev/null << EOF
@@ -206,7 +171,7 @@ After=network.target
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/main.py
+ExecStart=$EXEC_START
 Restart=always
 RestartSec=10
 StandardOutput=append:$INSTALL_DIR/logs/output.log
@@ -218,7 +183,8 @@ WantedBy=multi-user.target
 EOF
 
     sudo systemctl daemon-reload
-    echo -e "${GREEN}Systemd service created${NC}"
+    sudo systemctl enable rtspserver
+    echo -e "${GREEN}Systemd service created and enabled${NC}"
 }
 
 # Create management script
@@ -240,108 +206,54 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Check if PM2 is available
-use_pm2() {
-    command -v pm2 &> /dev/null
-}
-
 case "$1" in
     start)
         echo -e "${GREEN}Starting RTSP Server...${NC}"
-        if use_pm2; then
-            pm2 start ecosystem.config.js
-        else
-            sudo systemctl start rtspserver
-        fi
+        sudo systemctl start rtspserver
         ;;
     stop)
         echo -e "${YELLOW}Stopping RTSP Server...${NC}"
-        if use_pm2; then
-            pm2 stop rtspserver
-        else
-            sudo systemctl stop rtspserver
-        fi
+        sudo systemctl stop rtspserver
         ;;
     restart)
         echo -e "${BLUE}Restarting RTSP Server...${NC}"
-        if use_pm2; then
-            pm2 restart rtspserver
-        else
-            sudo systemctl restart rtspserver
-        fi
+        sudo systemctl restart rtspserver
         ;;
     status)
-        if use_pm2; then
-            pm2 status rtspserver
-        else
-            sudo systemctl status rtspserver
-        fi
+        sudo systemctl status rtspserver
         ;;
     logs)
-        if use_pm2; then
-            pm2 logs rtspserver --lines 100
-        else
-            tail -f logs/output.log logs/error.log
-        fi
-        ;;
-    monitor)
-        if use_pm2; then
-            pm2 monit
-        else
-            watch -n 1 "systemctl status rtspserver"
-        fi
-        ;;
-    update)
-        echo -e "${BLUE}Updating RTSP Server...${NC}"
-
-        # Stop server
-        if use_pm2; then
-            pm2 stop rtspserver 2>/dev/null || true
-        else
-            sudo systemctl stop rtspserver 2>/dev/null || true
-        fi
-
-        # Update code (if git repo)
-        if [ -d ".git" ]; then
-            git pull
-        fi
-
-        # Update dependencies
-        source venv/bin/activate
-        pip install -r requirements.txt --upgrade
-
-        # Restart
-        if use_pm2; then
-            pm2 start ecosystem.config.js
-        else
-            sudo systemctl start rtspserver
-        fi
-
-        echo -e "${GREEN}Update complete!${NC}"
+        tail -f logs/output.log logs/error.log
         ;;
     enable)
         echo -e "${GREEN}Enabling autostart...${NC}"
-        if use_pm2; then
-            pm2 startup
-            pm2 save
-        else
-            sudo systemctl enable rtspserver
-        fi
+        sudo systemctl enable rtspserver
         echo -e "${GREEN}RTSP Server will start on boot${NC}"
         ;;
     disable)
         echo -e "${YELLOW}Disabling autostart...${NC}"
-        if use_pm2; then
-            pm2 unstartup
-        else
-            sudo systemctl disable rtspserver
+        sudo systemctl disable rtspserver
+        ;;
+    update)
+        echo -e "${BLUE}Updating RTSP Server...${NC}"
+        sudo systemctl stop rtspserver 2>/dev/null || true
+        if [ -d ".git" ]; then
+            git pull
         fi
+        if [ -d "venv" ]; then
+            source venv/bin/activate
+            pip install -r requirements.txt --upgrade
+        else
+            pip3 install -r requirements.txt --upgrade 2>/dev/null || sudo pip3 install -r requirements.txt --upgrade
+        fi
+        sudo systemctl start rtspserver
+        echo -e "${GREEN}Update complete!${NC}"
         ;;
     *)
         echo ""
         echo -e "${BLUE}RTSP to HLS Server - Management${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|logs|monitor|update|enable|disable}"
+        echo "Usage: $0 {start|stop|restart|status|logs|enable|disable|update}"
         echo ""
         echo "Commands:"
         echo "  start    - Start the server"
@@ -349,10 +261,9 @@ case "$1" in
         echo "  restart  - Restart the server"
         echo "  status   - Show server status"
         echo "  logs     - View live logs"
-        echo "  monitor  - Real-time monitoring"
-        echo "  update   - Update and restart"
         echo "  enable   - Enable autostart on boot"
         echo "  disable  - Disable autostart"
+        echo "  update   - Update and restart"
         echo ""
         exit 1
         ;;
@@ -360,24 +271,11 @@ esac
 EOF
 
     chmod +x "$INSTALL_DIR/rtspserver.sh"
+
+    # Create symlink for easy access
+    sudo ln -sf "$INSTALL_DIR/rtspserver.sh" /usr/local/bin/rtspserver 2>/dev/null || true
+
     echo -e "${GREEN}Management script created: ./rtspserver.sh${NC}"
-}
-
-# Setup PM2 autostart
-setup_autostart() {
-    echo -e "${BLUE}Setting up autostart...${NC}"
-
-    # Start with PM2
-    cd "$INSTALL_DIR"
-    pm2 start ecosystem.config.js
-
-    # Generate startup script
-    pm2 startup
-
-    # Save current process list
-    pm2 save
-
-    echo -e "${GREEN}Autostart configured${NC}"
 }
 
 # Create .env file if not exists
@@ -394,8 +292,8 @@ DEBUG=false
 # Database
 DATABASE_PATH=./data/rtspserver.db
 
-# Streams directory
-STREAMS_DIR=./data/streams
+# Streams directory (use /tmp for auto-cleanup)
+STREAMS_DIR=/tmp/rtspserver/streams
 
 # Security (change in production!)
 SECRET_KEY=$(openssl rand -hex 32)
@@ -409,10 +307,17 @@ EOF
     fi
 }
 
+# Start and enable service
+start_service() {
+    echo -e "${BLUE}Starting service...${NC}"
+    sudo systemctl start rtspserver
+    echo -e "${GREEN}Service started and enabled on boot${NC}"
+}
+
 # Print completion message
 print_completion() {
     # Get local IP
-    LOCAL_IP=$(hostname -I | awk '{print $1}')
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 
     echo ""
     echo -e "${GREEN}"
@@ -422,17 +327,15 @@ print_completion() {
     echo -e "${NC}"
     echo ""
     echo -e "${BLUE}Server Management:${NC}"
-    echo "  ./rtspserver.sh start     - Start server"
-    echo "  ./rtspserver.sh stop      - Stop server"
-    echo "  ./rtspserver.sh restart   - Restart server"
-    echo "  ./rtspserver.sh logs      - View logs"
-    echo "  ./rtspserver.sh status    - Check status"
-    echo "  ./rtspserver.sh enable    - Enable autostart"
+    echo "  rtspserver start     - Start server"
+    echo "  rtspserver stop      - Stop server"
+    echo "  rtspserver restart   - Restart server"
+    echo "  rtspserver logs      - View logs"
+    echo "  rtspserver status    - Check status"
     echo ""
-    echo -e "${BLUE}Or use PM2 directly:${NC}"
-    echo "  pm2 start ecosystem.config.js"
-    echo "  pm2 logs rtspserver"
-    echo "  pm2 monit"
+    echo -e "${BLUE}Or use systemctl:${NC}"
+    echo "  sudo systemctl status rtspserver"
+    echo "  sudo journalctl -u rtspserver -f"
     echo ""
     echo -e "${BLUE}Access the web interface:${NC}"
     echo "  http://localhost:8000"
@@ -453,8 +356,10 @@ main() {
     echo -e "${YELLOW}This script will install:${NC}"
     echo "  - Python 3 and dependencies"
     echo "  - FFmpeg"
-    echo "  - Node.js and PM2"
-    echo "  - Configure autostart"
+    echo "  - Create systemd service (auto-start on boot)"
+    if [ "$USE_VENV" = "yes" ]; then
+        echo "  - Python virtual environment"
+    fi
     echo ""
 
     read -p "Continue with installation? (y/n) " -n 1 -r
@@ -466,21 +371,14 @@ main() {
     fi
 
     install_dependencies
-    install_nodejs
-    install_pm2
     setup_python
     create_directories
     create_env_file
-    create_pm2_config
     create_systemd_service
     create_management_script
 
-    echo ""
-    read -p "Start server and enable autostart now? (y/n) " -n 1 -r
-    echo
-
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        setup_autostart
+    if [ "$AUTO_START" = "yes" ]; then
+        start_service
     fi
 
     print_completion

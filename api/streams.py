@@ -1,5 +1,6 @@
 """Stream management API endpoints."""
 
+import asyncio
 import json
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
@@ -25,6 +26,7 @@ class StreamCreate(BaseModel):
     use_transcode: bool = False
     latency_mode: str = Field(default="stable", pattern="^(low|stable)$")
     ffmpeg_overrides: Optional[dict] = None
+    group_name: Optional[str] = Field(None, max_length=100)
 
 
 class StreamUpdate(BaseModel):
@@ -36,6 +38,7 @@ class StreamUpdate(BaseModel):
     use_transcode: Optional[bool] = None
     latency_mode: Optional[str] = Field(None, pattern="^(low|stable)$")
     ffmpeg_overrides: Optional[dict] = None
+    group_name: Optional[str] = Field(None, max_length=100)
 
 
 class StreamResponse(BaseModel):
@@ -56,6 +59,9 @@ class StreamResponse(BaseModel):
     use_transcode: bool
     latency_mode: str
     ffmpeg_overrides: Optional[dict]
+    group_name: Optional[str]
+    thumbnail: Optional[str]
+    thumbnail_updated: Optional[str]
     created_at: Optional[str]
     updated_at: Optional[str]
     hls_url: Optional[str] = None
@@ -87,6 +93,9 @@ class StreamResponse(BaseModel):
             use_transcode=bool(stream.use_transcode),
             latency_mode=stream.latency_mode or "stable",
             ffmpeg_overrides=overrides,
+            group_name=stream.group_name,
+            thumbnail=stream.thumbnail,
+            thumbnail_updated=stream.thumbnail_updated,
             created_at=stream.created_at,
             updated_at=stream.updated_at,
             hls_url=f"{base_url}/hls/{stream.id}/stream.m3u8" if base_url else None,
@@ -173,6 +182,7 @@ async def list_streams(
     search: str = Query(default=None, max_length=100),
     status: str = Query(default=None, pattern="^(stopped|starting|running|error|reconnecting)$"),
     mode: str = Query(default=None, pattern="^(always_on|on_demand|smart)$"),
+    group: str = Query(default=None, max_length=100),
     sort_by: str = Query(default="id", pattern="^(id|name|status|mode|created_at|updated_at|viewer_count)$"),
     sort_order: str = Query(default="asc", pattern="^(asc|desc)$"),
     _=Depends(require_auth)
@@ -184,6 +194,7 @@ async def list_streams(
         search=search,
         status=status,
         mode=mode,
+        group=group,
         sort_by=sort_by,
         sort_order=sort_order
     )
@@ -230,10 +241,14 @@ async def create_stream(
         keep_alive_seconds=data.keep_alive_seconds,
         use_transcode=data.use_transcode,
         latency_mode=data.latency_mode,
-        ffmpeg_overrides=json.dumps(data.ffmpeg_overrides) if data.ffmpeg_overrides else None
+        ffmpeg_overrides=json.dumps(data.ffmpeg_overrides) if data.ffmpeg_overrides else None,
+        group_name=data.group_name
     )
 
     stream = await db.add_stream(stream)
+
+    # Capture initial thumbnail in background
+    asyncio.create_task(stream_manager.capture_stream_thumbnail(stream.id))
 
     # Auto-start if always_on
     if stream.mode == StreamMode.ALWAYS_ON.value:
@@ -473,6 +488,8 @@ async def update_stream(
         stream.latency_mode = data.latency_mode
     if data.ffmpeg_overrides is not None:
         stream.ffmpeg_overrides = json.dumps(data.ffmpeg_overrides)
+    if data.group_name is not None:
+        stream.group_name = data.group_name if data.group_name else None
 
     await db.update_stream(stream)
 
@@ -658,3 +675,61 @@ async def viewer_heartbeat(
         "running": running,
         "viewer_id": viewer_id
     }
+
+
+@router.post("/{stream_id}/snapshot")
+async def capture_snapshot(
+    stream_id: str,
+    _=Depends(require_auth)
+):
+    """Capture a snapshot/thumbnail from the stream."""
+    stream = await db.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    thumbnail = await stream_manager.capture_stream_thumbnail(stream_id)
+    if not thumbnail:
+        raise HTTPException(status_code=500, detail="Failed to capture snapshot")
+
+    return {
+        "status": "ok",
+        "thumbnail": thumbnail,
+        "stream_id": stream_id
+    }
+
+
+@router.post("/batch/refresh-thumbnails")
+async def refresh_all_thumbnails(_=Depends(require_auth)):
+    """Capture thumbnails for all streams (runs in background)."""
+    streams = await db.get_all_streams()
+
+    async def capture_all():
+        success = 0
+        failed = 0
+        for stream in streams:
+            try:
+                thumbnail = await stream_manager.capture_stream_thumbnail(stream.id)
+                if thumbnail:
+                    success += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+            # Small delay between captures to avoid overwhelming
+            await asyncio.sleep(0.5)
+        return success, failed
+
+    # Run in background
+    asyncio.create_task(capture_all())
+
+    return {
+        "status": "ok",
+        "message": f"Refreshing thumbnails for {len(streams)} streams in background"
+    }
+
+
+@router.get("/groups/list")
+async def get_groups(_=Depends(require_auth)):
+    """Get all unique group names."""
+    groups = await db.get_groups()
+    return {"groups": groups}

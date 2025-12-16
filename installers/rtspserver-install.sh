@@ -3,10 +3,13 @@
 # RTSP to HLS Server - One-Line Installer
 #
 # Usage:
-#   bash <(curl -s https://raw.githubusercontent.com/YOUR_REPO/rtspserver/main/installers/rtspserver-install.sh)
+#   bash <(curl -s https://raw.githubusercontent.com/nofearsk/rtspserver/main/installers/rtspserver-install.sh)
 #
-# Or with options:
-#   bash <(curl -s ...) --branch develop --dir /opt/rtspserver
+# Options:
+#   --branch develop    Use specific branch
+#   --dir /opt/custom   Custom install directory
+#   --venv              Use Python virtual environment
+#   --no-start          Don't start server after install
 #
 
 set -e
@@ -15,6 +18,7 @@ set -e
 REPO_URL="https://github.com/nofearsk/rtspserver.git"
 BRANCH="main"
 INSTALL_DIR="/opt/rtspserver"
+USE_VENV="no"
 AUTO_START="yes"
 
 # Colors
@@ -52,6 +56,10 @@ parse_args() {
                 INSTALL_DIR="$2"
                 shift 2
                 ;;
+            --venv)
+                USE_VENV="yes"
+                shift
+                ;;
             --no-start)
                 AUTO_START="no"
                 shift
@@ -76,6 +84,7 @@ show_help() {
     echo "Options:"
     echo "  --branch, -b    Git branch to use (default: main)"
     echo "  --dir, -d       Installation directory (default: /opt/rtspserver)"
+    echo "  --venv          Use Python virtual environment (optional)"
     echo "  --no-start      Don't start server after installation"
     echo "  --help, -h      Show this help"
 }
@@ -105,7 +114,7 @@ detect_os() {
 
 # Install system dependencies
 install_system_deps() {
-    echo -e "${BLUE}[1/6] Installing system dependencies...${NC}"
+    echo -e "${BLUE}[1/5] Installing system dependencies...${NC}"
 
     case $OS in
         ubuntu|debian)
@@ -155,38 +164,9 @@ install_system_deps() {
     echo -e "${GREEN}✓ System dependencies installed${NC}"
 }
 
-# Install Node.js and PM2
-install_nodejs_pm2() {
-    echo -e "${BLUE}[2/6] Installing Node.js and PM2...${NC}"
-
-    # Install Node.js if not present
-    if ! command -v node &> /dev/null; then
-        case $OS in
-            ubuntu|debian)
-                curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - > /dev/null 2>&1
-                sudo apt-get install -y -qq nodejs > /dev/null
-                ;;
-            centos|rhel|rocky|almalinux|fedora)
-                curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash - > /dev/null 2>&1
-                sudo dnf install -y -q nodejs
-                ;;
-            arch|manjaro)
-                sudo pacman -S --noconfirm --quiet nodejs npm
-                ;;
-        esac
-    fi
-
-    # Install PM2
-    if ! command -v pm2 &> /dev/null; then
-        sudo npm install -g pm2 > /dev/null 2>&1
-    fi
-
-    echo -e "${GREEN}✓ Node.js $(node --version) and PM2 installed${NC}"
-}
-
 # Clone or download repository
 download_source() {
-    echo -e "${BLUE}[3/6] Downloading RTSP Server...${NC}"
+    echo -e "${BLUE}[2/5] Downloading RTSP Server...${NC}"
 
     # Create parent directory
     sudo mkdir -p "$(dirname "$INSTALL_DIR")"
@@ -213,31 +193,33 @@ download_source() {
     echo -e "${GREEN}✓ Source code downloaded to $INSTALL_DIR${NC}"
 }
 
-# Setup Python environment
+# Setup Python
 setup_python() {
-    echo -e "${BLUE}[4/6] Setting up Python environment...${NC}"
+    echo -e "${BLUE}[3/5] Installing Python dependencies...${NC}"
 
     cd "$INSTALL_DIR"
 
-    # Create virtual environment
-    python3 -m venv venv
+    if [ "$USE_VENV" = "yes" ]; then
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip -q
+        pip install -r requirements.txt -q
+    else
+        pip3 install --upgrade pip -q 2>/dev/null || sudo pip3 install --upgrade pip -q
+        pip3 install -r requirements.txt -q 2>/dev/null || sudo pip3 install -r requirements.txt -q
+    fi
 
-    # Activate and install dependencies
-    source venv/bin/activate
-    pip install --upgrade pip -q
-    pip install -r requirements.txt -q
-
-    echo -e "${GREEN}✓ Python environment ready${NC}"
+    echo -e "${GREEN}✓ Python dependencies installed${NC}"
 }
 
 # Create configuration files
 create_configs() {
-    echo -e "${BLUE}[5/6] Creating configuration files...${NC}"
+    echo -e "${BLUE}[4/5] Creating configuration files...${NC}"
 
     cd "$INSTALL_DIR"
 
     # Create directories
-    mkdir -p data/streams logs
+    mkdir -p data logs
 
     # Create .env if not exists
     if [ ! -f .env ]; then
@@ -246,34 +228,10 @@ HOST=0.0.0.0
 PORT=8000
 DEBUG=false
 DATABASE_PATH=./data/rtspserver.db
-STREAMS_DIR=./data/streams
+STREAMS_DIR=/tmp/rtspserver/streams
 SECRET_KEY=$(openssl rand -hex 32)
 EOF
     fi
-
-    # Create PM2 ecosystem file
-    cat > ecosystem.config.js << 'EOF'
-module.exports = {
-  apps: [{
-    name: 'rtspserver',
-    cwd: __dirname,
-    script: 'venv/bin/python',
-    args: 'main.py',
-    interpreter: 'none',
-    instances: 1,
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '1G',
-    env: {
-      NODE_ENV: 'production',
-      PYTHONUNBUFFERED: '1'
-    },
-    error_file: 'logs/error.log',
-    out_file: 'logs/output.log',
-    time: true
-  }]
-};
-EOF
 
     # Create management script
     cat > rtspserver << 'MGMT'
@@ -281,14 +239,13 @@ EOF
 cd "$(dirname "$0")"
 
 case "$1" in
-    start)   pm2 start ecosystem.config.js ;;
-    stop)    pm2 stop rtspserver ;;
-    restart) pm2 restart rtspserver ;;
-    status)  pm2 status rtspserver ;;
-    logs)    pm2 logs rtspserver --lines 100 ;;
-    monitor) pm2 monit ;;
+    start)   sudo systemctl start rtspserver ;;
+    stop)    sudo systemctl stop rtspserver ;;
+    restart) sudo systemctl restart rtspserver ;;
+    status)  sudo systemctl status rtspserver ;;
+    logs)    tail -f logs/output.log logs/error.log ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|logs|monitor}"
+        echo "Usage: $0 {start|stop|restart|status|logs}"
         exit 1
         ;;
 esac
@@ -301,20 +258,55 @@ MGMT
     echo -e "${GREEN}✓ Configuration files created${NC}"
 }
 
-# Start server and setup autostart
-start_server() {
-    echo -e "${BLUE}[6/6] Starting server...${NC}"
+# Create and start systemd service
+setup_service() {
+    echo -e "${BLUE}[5/5] Setting up systemd service...${NC}"
 
     cd "$INSTALL_DIR"
 
-    # Start with PM2
-    pm2 start ecosystem.config.js
+    # Get the user
+    if [ -n "$SUDO_USER" ]; then
+        SERVICE_USER="$SUDO_USER"
+    else
+        SERVICE_USER="$(whoami)"
+    fi
 
-    # Setup startup script
-    pm2 startup -u "${SUDO_USER:-$(whoami)}" --hp "${HOME:-/root}" > /dev/null 2>&1 || true
-    pm2 save > /dev/null 2>&1
+    # Determine python path
+    if [ "$USE_VENV" = "yes" ]; then
+        EXEC_START="$INSTALL_DIR/venv/bin/python $INSTALL_DIR/main.py"
+    else
+        EXEC_START="$(which python3) $INSTALL_DIR/main.py"
+    fi
 
-    echo -e "${GREEN}✓ Server started and autostart configured${NC}"
+    # Create systemd service
+    sudo tee /etc/systemd/system/rtspserver.service > /dev/null << EOF
+[Unit]
+Description=RTSP to HLS Streaming Server
+After=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$EXEC_START
+Restart=always
+RestartSec=10
+StandardOutput=append:$INSTALL_DIR/logs/output.log
+StandardError=append:$INSTALL_DIR/logs/error.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable rtspserver
+
+    if [ "$AUTO_START" = "yes" ]; then
+        sudo systemctl start rtspserver
+    fi
+
+    echo -e "${GREEN}✓ Service created and enabled${NC}"
 }
 
 # Show completion message
@@ -337,9 +329,9 @@ show_complete() {
     echo "  rtspserver logs     - View logs"
     echo "  rtspserver status   - Check status"
     echo ""
-    echo -e "${CYAN}Or use PM2 directly:${NC}"
-    echo "  pm2 logs rtspserver"
-    echo "  pm2 monit"
+    echo -e "${CYAN}Or use systemctl:${NC}"
+    echo "  sudo systemctl status rtspserver"
+    echo "  sudo journalctl -u rtspserver -f"
     echo ""
     echo -e "${YELLOW}First time setup:${NC}"
     echo "  1. Open the web interface in your browser"
@@ -361,6 +353,7 @@ main() {
     echo -e "${YELLOW}Installation settings:${NC}"
     echo "  Directory: $INSTALL_DIR"
     echo "  Branch: $BRANCH"
+    echo "  Virtual env: $USE_VENV"
     echo "  Auto-start: $AUTO_START"
     echo ""
 
@@ -374,14 +367,10 @@ main() {
 
     echo ""
     install_system_deps
-    install_nodejs_pm2
     download_source
     setup_python
     create_configs
-
-    if [ "$AUTO_START" = "yes" ]; then
-        start_server
-    fi
+    setup_service
 
     show_complete
 }

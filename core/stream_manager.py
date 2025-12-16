@@ -13,6 +13,7 @@ from config import settings
 from database import db, Stream, StreamStatus, StreamMode
 from core.stream_analyzer import analyzer, StreamInfo
 from core.ffmpeg_builder import ffmpeg_builder
+from core.thumbnail import capture_thumbnail, capture_thumbnail_from_hls
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,14 @@ class StreamManager:
         self._processes: Dict[str, StreamProcess] = {}
         self._lock = asyncio.Lock()
         self._cleanup_task: Optional[asyncio.Task] = None
+        self._thumbnail_task: Optional[asyncio.Task] = None
         self._running = False
 
     async def start(self):
         """Start the stream manager."""
         self._running = True
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        self._thumbnail_task = asyncio.create_task(self._thumbnail_loop())
 
         # Start all always-on streams
         streams = await db.get_always_on_streams()
@@ -64,12 +67,32 @@ class StreamManager:
             except asyncio.CancelledError:
                 pass
 
+        if self._thumbnail_task:
+            self._thumbnail_task.cancel()
+            try:
+                await self._thumbnail_task
+            except asyncio.CancelledError:
+                pass
+
         # Stop all running streams
         stream_ids = list(self._processes.keys())
         for stream_id in stream_ids:
             await self.stop_stream(stream_id)
 
         logger.info("Stream manager stopped")
+
+    def _get_oldest_stream_id(self) -> Optional[str]:
+        """Get the stream ID with the oldest start time (FIFO)."""
+        oldest_id = None
+        oldest_time = None
+
+        for sid, proc in self._processes.items():
+            if proc.start_time:
+                if oldest_time is None or proc.start_time < oldest_time:
+                    oldest_time = proc.start_time
+                    oldest_id = sid
+
+        return oldest_id
 
     async def start_stream(self, stream_id: str, viewer_id: str = None) -> bool:
         """
@@ -82,6 +105,9 @@ class StreamManager:
         Returns:
             True if stream started or already running
         """
+        # Check if we need to stop oldest stream (FIFO) before acquiring lock
+        stream_to_stop = None
+
         async with self._lock:
             # Check if already running
             if stream_id in self._processes:
@@ -91,6 +117,23 @@ class StreamManager:
                     proc.viewer_count = len(proc.viewers)
                     proc.last_viewer_time = datetime.utcnow()
                     await db.update_viewer_count(stream_id, proc.viewer_count)
+                return True
+
+            # Check max concurrent streams limit (FIFO eviction)
+            runtime_settings = await db.get_runtime_settings()
+            max_concurrent = runtime_settings['max_concurrent_streams']
+            if len(self._processes) >= max_concurrent:
+                stream_to_stop = self._get_oldest_stream_id()
+                if stream_to_stop:
+                    logger.info(f"Max concurrent streams ({max_concurrent}) reached. Stopping oldest stream: {stream_to_stop}")
+
+        # Stop oldest stream outside lock to avoid deadlock
+        if stream_to_stop:
+            await self.stop_stream(stream_to_stop)
+
+        async with self._lock:
+            # Re-check if already running (might have changed)
+            if stream_id in self._processes:
                 return True
 
             # Get stream from database
@@ -389,7 +432,8 @@ class StreamManager:
     async def _cleanup_segments(self):
         """Remove old HLS segments (older than segment_max_age_minutes)."""
         import time
-        max_age_seconds = settings.segment_max_age_minutes * 60
+        runtime_settings = await db.get_runtime_settings()
+        max_age_seconds = runtime_settings['segment_max_age_minutes'] * 60
         now = time.time()
         deleted_count = 0
 
@@ -443,6 +487,56 @@ class StreamManager:
         if lines:
             return lines[-1][:200]
         return "Unknown error occurred"
+
+    async def _thumbnail_loop(self):
+        """Periodically update thumbnails for running streams."""
+        while self._running:
+            try:
+                await asyncio.sleep(60)  # Update every 60 seconds
+                await self._update_thumbnails()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"Error in thumbnail loop: {e}")
+
+    async def _update_thumbnails(self):
+        """Update thumbnails for all running streams."""
+        for stream_id in list(self._processes.keys()):
+            try:
+                # Try to capture from HLS segments first (faster)
+                thumbnail = await capture_thumbnail_from_hls(stream_id)
+                if thumbnail:
+                    await db.update_stream_thumbnail(stream_id, thumbnail)
+                    logger.debug(f"Updated thumbnail for stream {stream_id}")
+            except Exception as e:
+                logger.debug(f"Failed to update thumbnail for {stream_id}: {e}")
+
+    async def capture_stream_thumbnail(self, stream_id: str) -> Optional[str]:
+        """
+        Capture a thumbnail for a specific stream.
+
+        Args:
+            stream_id: Stream ID
+
+        Returns:
+            Base64 encoded thumbnail or None
+        """
+        # First try HLS if stream is running
+        if stream_id in self._processes:
+            thumbnail = await capture_thumbnail_from_hls(stream_id)
+            if thumbnail:
+                await db.update_stream_thumbnail(stream_id, thumbnail)
+                return thumbnail
+
+        # Fall back to RTSP capture
+        stream = await db.get_stream(stream_id)
+        if stream:
+            thumbnail = await capture_thumbnail(stream.rtsp_url)
+            if thumbnail:
+                await db.update_stream_thumbnail(stream_id, thumbnail)
+                return thumbnail
+
+        return None
 
 
 # Global stream manager instance

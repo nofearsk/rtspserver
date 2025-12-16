@@ -20,13 +20,18 @@ A lightweight, self-hosted server that converts RTSP camera streams to HLS forma
 
 - Python 3.10+
 - FFmpeg
-- Node.js & PM2 (for production deployment)
+- Linux with systemd (Ubuntu, Debian, CentOS, etc.)
 
 ## Quick Install (One Command)
 
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/nofearsk/rtspserver/main/installers/rtspserver-install.sh)
 ```
+
+This will:
+- Install Python 3, FFmpeg, and dependencies
+- Create a systemd service (auto-starts on boot)
+- Start the server immediately
 
 ### Install Options
 
@@ -36,6 +41,9 @@ bash <(curl -s ...) --dir /opt/rtspserver
 
 # Specify branch
 bash <(curl -s ...) --branch develop
+
+# Use Python virtual environment (optional)
+bash <(curl -s ...) --venv
 
 # Don't auto-start after install
 bash <(curl -s ...) --no-start
@@ -58,28 +66,29 @@ chmod +x install.sh
 ```
 
 This will:
-- Install system dependencies (Python, FFmpeg, Node.js)
-- Create Python virtual environment
-- Install Python packages
-- Setup PM2 for process management
-- Create systemd service (optional)
+- Install system dependencies (Python, FFmpeg)
+- Install Python packages (globally by default)
+- Create systemd service (auto-starts on boot)
+- Start the server
+
+Options:
+```bash
+./install.sh --venv       # Use virtual environment
+./install.sh --no-start   # Don't auto-start
+```
 
 ### 3. Or install manually
 
 ```bash
 # Install system dependencies
 sudo apt update
-sudo apt install python3 python3-pip python3-venv ffmpeg
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+sudo apt install python3 python3-pip ffmpeg
 
 # Install Python dependencies
-pip install -r requirements.txt
+sudo pip3 install -r requirements.txt
 
 # Run the server
-python main.py
+python3 main.py
 ```
 
 ## Configuration
@@ -108,38 +117,39 @@ HLS_LIST_SIZE=5
 DEFAULT_MODE=on_demand
 KEEP_ALIVE_SECONDS=60
 STARTUP_TIMEOUT=15
+
+# Resource Limits
+MAX_STREAMS=900                # Max cameras in database
+MAX_CONCURRENT_STREAMS=30      # Max streams playing at once (FIFO)
 ```
 
 All settings can be overridden with environment variables prefixed with `RTSP_`.
 
 ## Usage
 
-### Starting the Server
-
-**With PM2 (recommended for production):**
-```bash
-./rtspserver.sh start
-# or
-pm2 start ecosystem.config.js
-```
-
-**Direct:**
-```bash
-source venv/bin/activate
-python main.py
-```
-
 ### Server Management
 
 ```bash
-./rtspserver.sh start     # Start server
-./rtspserver.sh stop      # Stop server
-./rtspserver.sh restart   # Restart server
-./rtspserver.sh status    # Check status
-./rtspserver.sh logs      # View logs
-./rtspserver.sh monitor   # Real-time monitoring
-./rtspserver.sh update    # Update and restart
-./rtspserver.sh enable    # Enable autostart on boot
+rtspserver start     # Start server
+rtspserver stop      # Stop server
+rtspserver restart   # Restart server
+rtspserver status    # Check status
+rtspserver logs      # View logs
+```
+
+Or use systemctl directly:
+```bash
+sudo systemctl start rtspserver
+sudo systemctl stop rtspserver
+sudo systemctl status rtspserver
+sudo journalctl -u rtspserver -f   # View live logs
+```
+
+### Running Manually (for development)
+
+```bash
+cd /opt/rtspserver
+python3 main.py
 ```
 
 ### Access the Web Interface

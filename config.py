@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     smart_idle_minutes: int = 5  # Switch to on-demand after this idle time
 
     # Resource limits
-    max_streams: int = 50
+    max_streams: int = 900  # Max cameras in database
+    max_concurrent_streams: int = 30  # Max streams playing at once (FIFO - oldest stops when exceeded)
     segment_cleanup_interval: int = 60  # Seconds between cleanup runs
     segment_max_age_minutes: int = 5  # Delete .ts segments older than this
 
