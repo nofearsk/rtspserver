@@ -130,9 +130,9 @@ class FFmpegBuilder:
             buffer_size = overrides.get("buffer_size", "1024000")  # ~1MB
         args.extend(["-buffer_size", str(buffer_size)])
 
-        # Timeout settings
-        stimeout = overrides.get("stimeout", "5000000")  # 5 seconds in microseconds
-        args.extend(["-stimeout", str(stimeout)])
+        # Timeout settings (use 'timeout' for newer FFmpeg, fallback from 'stimeout')
+        timeout_val = overrides.get("timeout", overrides.get("stimeout", "5000000"))  # 5 seconds in microseconds
+        args.extend(["-timeout", str(timeout_val)])
 
         # Overwrite output
         args.append("-y")
@@ -303,7 +303,7 @@ class FFmpegBuilder:
         return {
             "rtsp_transport": "tcp",  # tcp or udp
             "buffer_size": "1024000",  # Input buffer size
-            "stimeout": "5000000",  # Socket timeout (microseconds)
+            "timeout": "5000000",  # Connection timeout (microseconds)
             "transcode_video": False,  # Force video transcoding
             "transcode_audio": False,  # Force audio transcoding
             "no_audio": False,  # Disable audio

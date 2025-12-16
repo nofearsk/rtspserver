@@ -100,7 +100,7 @@ class StreamAnalyzer:
                 "-show_streams",
                 "-rtsp_transport", "tcp",
                 "-rtsp_flags", "prefer_tcp",  # Force client mode
-                "-stimeout", str(self.timeout * 1000000),  # Socket timeout (microseconds)
+                "-timeout", str(self.timeout * 1000000),  # Connection timeout (microseconds)
                 "-analyzeduration", "5000000",  # 5 seconds max analysis
                 "-probesize", "5000000",  # 5MB probe size
                 rtsp_url

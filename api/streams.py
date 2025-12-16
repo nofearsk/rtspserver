@@ -270,7 +270,7 @@ async def get_override_options(
     descriptions = {
         "rtsp_transport": "RTSP transport protocol: tcp (reliable) or udp (lower latency)",
         "buffer_size": "Input buffer size in bytes (default: 1MB)",
-        "stimeout": "Socket timeout in microseconds",
+        "timeout": "Connection timeout in microseconds (default: 5000000 = 5s)",
         "transcode_video": "Force video transcoding even if copy is possible",
         "transcode_audio": "Force audio transcoding even if copy is possible",
         "no_audio": "Disable audio completely",
