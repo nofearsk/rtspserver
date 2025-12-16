@@ -193,11 +193,30 @@ download_source() {
     echo -e "${GREEN}✓ Source code downloaded to $INSTALL_DIR${NC}"
 }
 
+# Check if PEP 668 (externally-managed-environment) is in effect
+check_pep668() {
+    # Check if we need venv due to PEP 668 (Ubuntu 24.04+, Debian 12+, etc.)
+    if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null; then
+        # Python 3.11+ - check for EXTERNALLY-MANAGED marker
+        STDLIB_PATH=$(python3 -c "import sysconfig; print(sysconfig.get_path('stdlib'))" 2>/dev/null)
+        if [ -f "$STDLIB_PATH/EXTERNALLY-MANAGED" ]; then
+            return 0  # PEP 668 in effect
+        fi
+    fi
+    return 1  # No PEP 668
+}
+
 # Setup Python
 setup_python() {
     echo -e "${BLUE}[3/5] Installing Python dependencies...${NC}"
 
     cd "$INSTALL_DIR"
+
+    # Auto-enable venv if PEP 668 is in effect (Ubuntu 24.04+, Debian 12+)
+    if [ "$USE_VENV" != "yes" ] && check_pep668; then
+        echo -e "${YELLOW}PEP 668 detected - using virtual environment automatically${NC}"
+        USE_VENV="yes"
+    fi
 
     if [ "$USE_VENV" = "yes" ]; then
         python3 -m venv venv

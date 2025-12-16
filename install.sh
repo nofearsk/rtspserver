@@ -106,11 +106,28 @@ install_dependencies() {
     esac
 }
 
+# Check if PEP 668 (externally-managed-environment) is in effect
+check_pep668() {
+    if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null; then
+        STDLIB_PATH=$(python3 -c "import sysconfig; print(sysconfig.get_path('stdlib'))" 2>/dev/null)
+        if [ -f "$STDLIB_PATH/EXTERNALLY-MANAGED" ]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # Setup Python - with or without venv
 setup_python() {
     echo -e "${BLUE}Installing Python dependencies...${NC}"
 
     cd "$INSTALL_DIR"
+
+    # Auto-enable venv if PEP 668 is in effect (Ubuntu 24.04+, Debian 12+)
+    if [ "$USE_VENV" != "yes" ] && check_pep668; then
+        echo -e "${YELLOW}PEP 668 detected - using virtual environment automatically${NC}"
+        USE_VENV="yes"
+    fi
 
     if [ "$USE_VENV" = "yes" ]; then
         echo -e "${BLUE}Creating virtual environment...${NC}"
