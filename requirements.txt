@@ -13,6 +13,9 @@ PyJWT>=2.8.0
 # HTTP client for NVR discovery
 aiohttp>=3.9.0
 
+# System monitoring
+psutil>=5.9.0
+
 # WebRTC support (optional - for sub-second latency)
 aiortc>=1.6.0
 av>=10.0.0
