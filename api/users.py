@@ -205,12 +205,12 @@ async def create_api_key(data: ApiKeyCreate, user: User = Depends(require_auth))
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    key, api_key = await db.create_api_key(data.name)
+    api_key, raw_key = await db.create_api_key(data.name)
 
     return ApiKeyCreatedResponse(
         id=api_key.id,
         name=api_key.name,
-        key=key,  # Full key only returned once on creation
+        key=raw_key,  # Full key only returned once on creation
         key_prefix=api_key.key_prefix,
         created_at=api_key.created_at
     )

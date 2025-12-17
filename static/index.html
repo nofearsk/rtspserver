@@ -1257,6 +1257,35 @@
                     </div>
                     <div id="claudeApiStatus" style="font-size: 12px; margin-top: 4px;"></div>
                 </div>
+
+                <!-- Server API Keys -->
+                <h4 style="margin-top: 24px; margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px;">API Keys</h4>
+                <div class="form-group">
+                    <p style="font-size: 12px; color: #666; margin-bottom: 12px;">
+                        API keys for external access. Use header: <code style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">X-API-Key: your-key</code>
+                    </p>
+
+                    <!-- Create new API key -->
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <input type="text" id="newApiKeyName" placeholder="Key name (e.g., My App)" style="flex: 1;">
+                        <button onclick="createServerApiKey()" class="primary">Create Key</button>
+                    </div>
+
+                    <!-- Newly created key display -->
+                    <div id="newKeyDisplay" style="display: none; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; padding: 12px; margin-bottom: 12px;">
+                        <div style="font-weight: 600; color: #155724; margin-bottom: 8px;">New API Key Created!</div>
+                        <div style="font-size: 12px; color: #155724; margin-bottom: 8px;">Copy this key now - it won't be shown again:</div>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="newKeyValue" readonly style="flex: 1; font-family: monospace; font-size: 12px;">
+                            <button onclick="copyNewApiKey()" class="secondary" style="width: 70px;">Copy</button>
+                        </div>
+                    </div>
+
+                    <!-- Existing API keys list -->
+                    <div id="apiKeysList" style="border: 1px solid #ddd; border-radius: 4px; max-height: 200px; overflow-y: auto;">
+                        <div style="padding: 12px; color: #666; text-align: center;">Loading...</div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="secondary" onclick="closeSettingsModal()">Cancel</button>
@@ -2864,6 +2893,8 @@
         async function openSettingsModal() {
             document.getElementById('settingsModal').classList.add('active');
             document.getElementById('claudeApiKey').value = '';
+            document.getElementById('newApiKeyName').value = '';
+            document.getElementById('newKeyDisplay').style.display = 'none';
 
             // Load all settings
             try {
@@ -2893,6 +2924,9 @@
                     statusEl.innerHTML = '<span style="color: #666;">Not configured</span>';
                     removeBtn.style.display = 'none';
                 }
+
+                // Load server API keys
+                loadServerApiKeys();
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
@@ -2978,6 +3012,104 @@
             } catch (e) {
                 showToast('Failed to remove API key', true);
             }
+        }
+
+        // Server API Key Management
+        async function loadServerApiKeys() {
+            const listEl = document.getElementById('apiKeysList');
+            try {
+                const res = await fetch('/api/auth/api-keys', { credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load API keys');
+                const keys = await res.json();
+
+                if (keys.length === 0) {
+                    listEl.innerHTML = '<div style="padding: 12px; color: #666; text-align: center;">No API keys created yet</div>';
+                    return;
+                }
+
+                listEl.innerHTML = keys.map(key => `
+                    <div style="display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid #eee; gap: 12px;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 500;">${escapeHtml(key.name)}</div>
+                            <div style="font-size: 11px; color: #666; font-family: monospace;">${key.key_prefix}...</div>
+                        </div>
+                        <div style="font-size: 11px; color: #888;">
+                            ${key.last_used ? 'Used: ' + new Date(key.last_used).toLocaleDateString() : 'Never used'}
+                        </div>
+                        <button onclick="deleteServerApiKey(${key.id}, '${escapeHtml(key.name)}')" class="danger" style="padding: 4px 8px; font-size: 12px;">Delete</button>
+                    </div>
+                `).join('');
+            } catch (e) {
+                listEl.innerHTML = '<div style="padding: 12px; color: #dc3545; text-align: center;">Failed to load API keys</div>';
+            }
+        }
+
+        async function createServerApiKey() {
+            const nameInput = document.getElementById('newApiKeyName');
+            const name = nameInput.value.trim();
+
+            if (!name) {
+                showToast('Please enter a name for the API key', true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/auth/api-keys', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: 'Failed to create API key' }));
+                    throw new Error(err.detail);
+                }
+
+                const data = await res.json();
+
+                // Show the new key
+                document.getElementById('newKeyDisplay').style.display = 'block';
+                document.getElementById('newKeyValue').value = data.key;
+                nameInput.value = '';
+
+                // Reload the list
+                loadServerApiKeys();
+                showToast('API key created successfully');
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        function copyNewApiKey() {
+            const input = document.getElementById('newKeyValue');
+            input.select();
+            document.execCommand('copy');
+            showToast('API key copied to clipboard');
+        }
+
+        async function deleteServerApiKey(keyId, keyName) {
+            if (!confirm(`Delete API key "${keyName}"? This cannot be undone.`)) return;
+
+            try {
+                const res = await fetch(`/api/auth/api-keys/${keyId}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+
+                if (!res.ok) throw new Error('Failed to delete API key');
+
+                showToast('API key deleted');
+                loadServerApiKeys();
+            } catch (e) {
+                showToast('Failed to delete API key', true);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // Auto-name cameras using AI
